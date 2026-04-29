@@ -250,6 +250,66 @@ function indentBlock(body: string, spaces: number): string {
     .join("\n");
 }
 
+function hasOddUnescapedChar(source: string, target: "'" | '"' | "`"): boolean {
+  let count = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] !== target) {
+      continue;
+    }
+    let backslashes = 0;
+    let j = i - 1;
+    while (j >= 0 && source[j] === "\\") {
+      backslashes += 1;
+      j -= 1;
+    }
+    if (backslashes % 2 === 0) {
+      count += 1;
+    }
+  }
+  return count % 2 === 1;
+}
+
+function hasLikelyIncompleteSyntax(source: string): boolean {
+  let paren = 0;
+  let brace = 0;
+  let bracket = 0;
+  for (const ch of source) {
+    if (ch === "(") paren += 1;
+    if (ch === ")") paren -= 1;
+    if (ch === "{") brace += 1;
+    if (ch === "}") brace -= 1;
+    if (ch === "[") bracket += 1;
+    if (ch === "]") bracket -= 1;
+    if (paren < 0 || brace < 0 || bracket < 0) {
+      return true;
+    }
+  }
+  if (paren !== 0 || brace !== 0 || bracket !== 0) {
+    return true;
+  }
+  if (
+    hasOddUnescapedChar(source, "'") ||
+    hasOddUnescapedChar(source, '"') ||
+    hasOddUnescapedChar(source, "`")
+  ) {
+    return true;
+  }
+  return /(?:\b(?:function|const|let|var|return|export)\s*)$/.test(source.trimEnd());
+}
+
+function composingLiveCode(message?: string): string {
+  const subtitle =
+    message || "Preview will render automatically when JSX becomes complete.";
+  const safeSubtitle = JSON.stringify(subtitle);
+  return `const Composing = () => (
+  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <p className="font-semibold">Streaming in progress</p>
+    <p className="mt-1">{${safeSubtitle}}</p>
+  </div>
+);
+render(<Composing />);`;
+}
+
 /**
  * Wrap raw streamed body in a single component + export default for force-preview attempts.
  */
@@ -296,6 +356,11 @@ render(<StreamError />);`;
   if (!withoutImports) {
     return WAITING_LIVE_CODE;
   }
+  if (hasLikelyIncompleteSyntax(withoutImports)) {
+    return composingLiveCode(
+      "Generated code is still incomplete. Waiting for valid syntax before rendering.",
+    );
+  }
 
   const forceRender = Boolean(options?.forceRender);
   const hasExport =
@@ -338,11 +403,5 @@ render(<StreamError />);`;
     return `${body}\n\nrender(<${forcedName} />);`;
   }
 
-  return `const Composing = () => (
-  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-    <p className="font-semibold">Streaming in progress</p>
-    <p className="mt-1">Preview will render automatically when JSX becomes complete.</p>
-  </div>
-);
-render(<Composing />);`;
+  return composingLiveCode();
 }
