@@ -38,9 +38,7 @@ import { pickRandomSurpriseIdea } from "@/lib/prompt/surprise-ideas";
 import { designStyles, type DesignStyle } from "@/lib/validation/generate-request";
 import { ApiResponse } from "@/types/generation";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() ||
-  "http://localhost:3000/api/image-to-react";
+const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
 const HISTORY_STORAGE_KEY = "luxegen-recent-history";
 const uploadClient = axios.create({
   timeout: 120000,
@@ -436,6 +434,15 @@ export function DesignerWorkspace() {
   async function uploadImage(file: File): Promise<void> {
     if (isLoading) {
       console.log("[upload] uploadImage skipped: already loading");
+      return;
+    }
+    if (!API_URL) {
+      const missingEnvMessage =
+        "Image upload API is not configured. Set NEXT_PUBLIC_API_URL in your environment (Vercel Project Settings -> Environment Variables).";
+      setError(missingEnvMessage);
+      setErrorToastMessage(missingEnvMessage);
+      setShowErrorToast(true);
+      setTimeout(() => setShowErrorToast(false), 2200);
       return;
     }
     console.log("[upload] starting upload", {

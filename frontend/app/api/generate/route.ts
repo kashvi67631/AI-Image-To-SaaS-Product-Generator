@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { buildDesignStyleBlock } from "@/lib/generation/design-style-directives";
+import { designStyleDirectives } from "@/lib/generation/design-style-directives";
 import {
   generateRequestSchema,
   type DesignStyle,
@@ -39,13 +39,20 @@ function buildUserPrompt(args: {
 
 function buildSystemInstruction(designStyle: DesignStyle): string {
   const styleLabel = designStyle.replace(/-/g, " ");
-  const styleDirective = buildDesignStyleBlock(designStyle);
+  const styleDirective = designStyleDirectives[designStyle];
 
-  return `You are a Senior UI/UX Architect and expert React + TypeScript + Tailwind engineer. You design and ship interfaces that feel intentional, accessible, and production-ready—not generic boilerplate.
+  return `You are a Senior UI/UX Architect and expert React + TypeScript + Tailwind engineer. You design and ship interfaces that feel intentional, accessible, and production-ready - not generic boilerplate.
 
 Design style for this brief: "${styleLabel}".
 You MUST follow this visual direction for layout, color, typography, spacing, and decoration:
 ${styleDirective}
+
+THEME-SPECIFIC TAILWIND IS LAW
+- When the style block lists NON-NEGOTIABLE TAILWIND utilities, you MUST include those exact class strings (e.g. font-serif, text-amber-600, tracking-widest for luxury-minimal; rounded-2xl, bg-indigo-600, shadow-2xl for b2b-saas) on GeneratedComponent as described. Do not substitute close synonyms unless you also keep the required classes on the specified elements.
+
+ANTI-GENERIC / ANTI-DEFAULT-PURPLE
+- Do NOT fall back to a generic purple/violet-on-white minimal landing template: no violet-500/violet-600 hero gradients on white as the default look, no interchangeable SaaS purple blob backgrounds.
+- Let the selected "${styleLabel}" drive palette and shape language; use stone/slate/neutral bases when the style calls for restraint, and use the mandated accent utilities from the style block.
 
 RESPONSIVE & MOBILE-FIRST
 - Build for small screens first, then enhance with sm:, md:, and lg: breakpoints.

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { LiveError, LivePreview, LiveProvider } from "react-live";
 import {
+  appendMissingDefaultExport,
   analyzePreviewCodeIssues,
   prepareStreamedCodeForLive,
 } from "@/lib/live-preview";
@@ -63,11 +64,15 @@ export function StreamingLivePreview({
   onServerBusyRetry,
   forceRender = false,
 }: StreamingLivePreviewProps) {
+  const normalizedRawCode = React.useMemo(() => appendMissingDefaultExport(rawCode), [rawCode]);
   const liveCode = React.useMemo(
-    () => prepareStreamedCodeForLive(rawCode, { forceRender }),
-    [rawCode, forceRender],
+    () => prepareStreamedCodeForLive(normalizedRawCode, { forceRender }),
+    [normalizedRawCode, forceRender],
   );
-  const diagnostics = React.useMemo(() => analyzePreviewCodeIssues(rawCode), [rawCode]);
+  const diagnostics = React.useMemo(
+    () => analyzePreviewCodeIssues(normalizedRawCode),
+    [normalizedRawCode],
+  );
 
   if (serverBusy) {
     return (
@@ -123,7 +128,7 @@ export function StreamingLivePreview({
           scope={livePreviewScope}
           enableTypeScript
         >
-          <PreviewErrorBoundary code={`${rawCode}:${forceRender ? "1" : "0"}`}>
+          <PreviewErrorBoundary code={`${normalizedRawCode}:${forceRender ? "1" : "0"}`}>
             <div className="max-h-[26rem] min-h-[20rem] overflow-y-auto overflow-x-hidden rounded-2xl border border-white/10 bg-white p-4 text-black [&_main]:h-auto [&_main]:min-h-0 [&_main]:max-h-none [&_main]:overflow-visible">
               <LivePreview />
             </div>

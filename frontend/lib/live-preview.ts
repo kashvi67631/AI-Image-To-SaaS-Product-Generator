@@ -21,11 +21,51 @@ function extractStreamError(source: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+/** Brace depth within a line (for multiline import blocks). */
+function braceDelta(line: string): number {
+  let depth = 0;
+  for (const ch of line) {
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+    }
+  }
+  return depth;
+}
+
+/**
+ * Remove import lines and blocks (including multiline `import { ... } from "x"`).
+ * Line-only filters leave orphan `}` / identifiers and break react-live parsing.
+ */
 function stripImportLines(source: string): string {
-  return source
-    .split("\n")
-    .filter((line) => !/^\s*import\s/.test(line))
-    .join("\n");
+  const lines = source.split("\n");
+  const out: string[] = [];
+  let skipping = false;
+  let depth = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!skipping) {
+      if (/^\s*import(?:\s+|\{)/.test(line)) {
+        skipping = true;
+        depth = braceDelta(line);
+        if (trimmed.endsWith(";") && depth <= 0) {
+          skipping = false;
+        }
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+
+    depth += braceDelta(line);
+    if (trimmed.endsWith(";") && depth <= 0) {
+      skipping = false;
+    }
+  }
+
+  return out.join("\n");
 }
 
 function stripViewportHeightCaps(source: string): string {
@@ -43,6 +83,70 @@ function stripMarkdownFences(source: string): string {
     .trim();
   // Some streamed outputs leave a dangling language token on first line.
   return stripped.replace(/^(tsx|jsx|typescript|javascript)\s*\n/i, "");
+}
+
+/** RSC directives break react-live's eval; streamed Next code often includes them. */
+function stripRscDirectives(source: string): string {
+  return source
+    .replace(/^\s*["']use client["']\s*;?\s*/gim, "")
+    .replace(/^\s*["']use server["']\s*;?\s*/gim, "");
+}
+
+function detectLastComponentSymbol(source: string): string | null {
+  const names: string[] = [];
+  for (const m of source.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*[<(]/g)) {
+    if (m[1]) {
+      names.push(m[1]);
+    }
+  }
+  for (const m of source.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=/g)) {
+    if (m[1]) {
+      names.push(m[1]);
+    }
+  }
+  return names.length ? names[names.length - 1] : null;
+}
+
+/** Resolve which identifier to render() after ensureDefaultExport runs. */
+function extractDefaultExportName(source: string): string | null {
+  const fromFn = source.match(/export\s+default\s+function\s+(\w+)\s*[<(]/);
+  if (fromFn?.[1]) {
+    return fromFn[1];
+  }
+  const fromIdent = source.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*(?:;|\s*$)/m);
+  if (fromIdent?.[1]) {
+    return fromIdent[1];
+  }
+  return null;
+}
+
+/**
+ * Appends a default export to streamed code when missing, so preview can keep rendering
+ * during partial generations instead of blanking.
+ */
+export function appendMissingDefaultExport(raw: string): string {
+  const cleaned = stripRscDirectives(stripMarkdownFences(raw));
+  if (!cleaned.trim()) {
+    return cleaned;
+  }
+  if (/export\s+default\s+/.test(cleaned)) {
+    return cleaned;
+  }
+  const inferred = detectLastComponentSymbol(cleaned);
+  if (inferred) {
+    return `${cleaned}\n\nexport default ${inferred};`;
+  }
+  return `${cleaned}
+
+function GeneratedComponent() {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      Generated code is incomplete. Keep streaming for full render.
+    </div>
+  );
+}
+
+export default GeneratedComponent;`;
 }
 
 function ensureDefaultExport(source: string): string {
@@ -95,7 +199,7 @@ export function analyzePreviewCodeIssues(raw: string): {
   unsupportedImports: string[];
   streamError: string | null;
 } {
-  const sanitized = stripMarkdownFences(raw);
+  const sanitized = stripRscDirectives(stripMarkdownFences(raw));
   const streamError = extractStreamError(sanitized);
   const hasDefaultExport =
     /export\s+default\s+function\s+\w+\s*[<(]/.test(sanitized) ||
@@ -131,7 +235,7 @@ function isUnavailableServiceError(text: string): boolean {
 
 /** Detect Gemini/stream errors embedded in streamed text (e.g. after non-JSON error path). */
 export function detectStreamUnavailableInText(raw: string): boolean {
-  const cleaned = stripMarkdownFences(raw);
+  const cleaned = stripRscDirectives(stripMarkdownFences(raw));
   if (extractStreamError(cleaned) && isUnavailableServiceError(cleaned)) {
     return true;
   }
@@ -170,7 +274,7 @@ export function prepareStreamedCodeForLive(
   raw: string,
   options?: PrepareStreamedLiveOptions,
 ): string {
-  const cleaned = stripMarkdownFences(raw);
+  const cleaned = stripRscDirectives(stripMarkdownFences(raw));
   const streamError = extractStreamError(cleaned);
   if (streamError) {
     if (isUnavailableServiceError(streamError)) {
@@ -203,9 +307,7 @@ render(<StreamError />);`;
   }
 
   const withExport = ensureDefaultExport(withoutImports);
-  const fnExportMatch = withoutImports.match(/export\s+default\s+function\s+(\w+)\s*[<(]/);
-  const symbolExportMatch = withoutImports.match(/export\s+default\s+(\w+)\s*;?/);
-  const componentName = fnExportMatch?.[1] || symbolExportMatch?.[1];
+  const componentName = extractDefaultExportName(withExport);
   if (componentName) {
     const body = withExport
       .replace(/export\s+default\s+function\s+/g, "function ")
