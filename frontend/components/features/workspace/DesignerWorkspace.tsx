@@ -41,11 +41,55 @@ import { designStyles, type DesignStyle } from "@/lib/validation/generate-reques
 import { ApiResponse } from "@/types/generation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
+const RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const HISTORY_STORAGE_KEY = "luxegen-recent-history";
 const uploadClient = axios.create({
   timeout: 120000,
   headers: { Accept: "application/json" },
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithExponentialBackoff(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    const response = await fetch(input, init);
+    if (response.status !== 503) {
+      return response;
+    }
+    if (attempt < RETRY_DELAYS_MS.length) {
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  return fetch(input, init);
+}
+
+uploadClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (!axios.isAxiosError(error)) {
+      return Promise.reject(error);
+    }
+    const status = error.response?.status;
+    const cfg = error.config;
+    if (status !== 503 || !cfg) {
+      return Promise.reject(error);
+    }
+
+    const retries = Number((cfg as { __retryCount?: number }).__retryCount ?? 0);
+    if (retries >= RETRY_DELAYS_MS.length) {
+      return Promise.reject(error);
+    }
+
+    (cfg as { __retryCount?: number }).__retryCount = retries + 1;
+    await sleep(RETRY_DELAYS_MS[retries]);
+    return uploadClient.request(cfg);
+  },
+);
 
 function fireSuccessConfetti() {
   confetti({
@@ -67,9 +111,6 @@ function formatDesignStyleLabel(style: DesignStyle): string {
 function createClientId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
 }
-
-const CAPACITY_RETRY_DELAY_MS = 3000;
-const MAX_CAPACITY_RETRIES = 8;
 
 function isUnavailableResponse(status: number, bodyText: string): boolean {
   if (status === 503) {
@@ -210,32 +251,6 @@ export function DesignerWorkspace() {
     return () => window.removeEventListener("keydown", onGlobalUploadShortcut);
   }, [isLoading]);
 
-  function scheduleCapacityAutoRetry(): boolean {
-    capacityRetryCountRef.current += 1;
-    if (capacityRetryCountRef.current > MAX_CAPACITY_RETRIES) {
-      capacityRetryCountRef.current = 0;
-      setPromptError(
-        "Service is still busy after several retries. Please wait a moment and try again.",
-      );
-      setServerBusy(true);
-      setStreamedPromptCode("");
-      setShowCapacityToast(false);
-      return false;
-    }
-
-    setShowCapacityToast(true);
-    setTimeout(() => setShowCapacityToast(false), 2800);
-
-    if (capacityRetryTimeoutRef.current) {
-      clearTimeout(capacityRetryTimeoutRef.current);
-    }
-    capacityRetryTimeoutRef.current = setTimeout(() => {
-      capacityRetryTimeoutRef.current = null;
-      void executePromptGenerate(undefined, { isAutoRetry: true });
-    }, CAPACITY_RETRY_DELAY_MS);
-    return true;
-  }
-
   async function executePromptGenerate(
     options?: { prompt?: string; previousCode?: string },
     flags?: { isAutoRetry?: boolean },
@@ -257,7 +272,6 @@ export function DesignerWorkspace() {
     }
 
     setGenerateLoading(true);
-    let keepLoadingForScheduledRetry = false;
     let streamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     try {
@@ -275,7 +289,7 @@ export function DesignerWorkspace() {
         previousCode,
       };
 
-      const res = await fetch("/api/generate", {
+      const res = await fetchWithExponentialBackoff("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -289,8 +303,10 @@ export function DesignerWorkspace() {
         const errorBodyText = await res.text();
         if (res.status === 503 || isUnavailableResponse(res.status, errorBodyText)) {
           setStreamedPromptCode("");
-          setServerBusy(false);
-          keepLoadingForScheduledRetry = scheduleCapacityAutoRetry();
+          setServerBusy(true);
+          setPromptError(
+            "Gemini API is busy after retries (2s, 4s, 8s). Please try again shortly.",
+          );
           return;
         }
         let message = `Request failed (${res.status})`;
@@ -330,8 +346,10 @@ export function DesignerWorkspace() {
             }
             streamReader = null;
             setStreamedPromptCode("");
-            setServerBusy(false);
-            keepLoadingForScheduledRetry = scheduleCapacityAutoRetry();
+            setServerBusy(true);
+            setPromptError(
+              "Gemini API is busy after retries (2s, 4s, 8s). Please try again shortly.",
+            );
             return;
           }
           setStreamedPromptCode(accumulated);
@@ -349,8 +367,8 @@ export function DesignerWorkspace() {
 
       if (accumulated.trim() && detectStreamUnavailableInText(accumulated)) {
         setStreamedPromptCode("");
-        setServerBusy(false);
-        keepLoadingForScheduledRetry = scheduleCapacityAutoRetry();
+        setServerBusy(true);
+        setPromptError("Gemini API is busy after retries (2s, 4s, 8s). Please try again shortly.");
         return;
       }
 
@@ -386,15 +404,13 @@ export function DesignerWorkspace() {
         isUnavailableResponse(thrownStatus ?? 0, msg)
       ) {
         setStreamedPromptCode("");
-        setServerBusy(false);
-        keepLoadingForScheduledRetry = scheduleCapacityAutoRetry();
+        setServerBusy(true);
+        setPromptError("Gemini API is busy after retries (2s, 4s, 8s). Please try again shortly.");
       } else {
         setPromptError(msg);
       }
     } finally {
-      if (!keepLoadingForScheduledRetry) {
-        setGenerateLoading(false);
-      }
+      setGenerateLoading(false);
     }
   }
 

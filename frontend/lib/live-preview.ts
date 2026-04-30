@@ -58,6 +58,22 @@ function stripFirstLineNonAlphaPrefix(source: string): string {
   return lines.join("\n");
 }
 
+/**
+ * If first 50 chars contain punctuation noise before import/export/const, strip it aggressively.
+ */
+function stripAggressivePrefixBeforeCodeKeyword(source: string): string {
+  const firstWindow = source.slice(0, 50);
+  const keywordIdx = firstWindow.search(/\b(?:import|export|const)\b/);
+  if (keywordIdx <= 0) {
+    return source;
+  }
+  const prefix = firstWindow.slice(0, keywordIdx);
+  if (/[^A-Za-z0-9\s]/.test(prefix)) {
+    return `${source.slice(keywordIdx)}`.trimStart();
+  }
+  return source;
+}
+
 function findMatchingBraceIndex(source: string, startBraceIdx: number): number {
   let depth = 0;
   for (let i = startBraceIdx; i < source.length; i += 1) {
@@ -284,6 +300,7 @@ export function sanitizeCode(streamChunk: string): string {
   let out = removeStreamCodeFences(streamChunk);
   out = stripLeadingStreamNoiseChars(out);
   out = stripFirstLineNonAlphaPrefix(out);
+  out = stripAggressivePrefixBeforeCodeKeyword(out);
   out = stripRscDirectives(out);
   out = stripLeadingNonCodeLines(out);
   out = stripNonCodeNoiseWithRegex(out);
