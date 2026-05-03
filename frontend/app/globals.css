@@ -15,7 +15,7 @@
 }
 
 .dark {
-  --background: #050505;
+  --background: #261e01;
   --foreground: #ededed;
 }
 
@@ -104,3 +104,482 @@ body {
   );
 }
 
+/* Luxe workspace — high-end gold shimmer for canvas loading */
+.luxe-gold-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(176, 140, 60, 0.22) 0%,
+    rgba(252, 207, 69, 0.55) 42%,
+    rgba(212, 175, 55, 0.35) 100%
+  );
+  background-size: 240% 100%;
+  animation: shimmer 1.85s ease-in-out infinite;
+}
+
+.dark .luxe-gold-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(80, 62, 32, 0.45) 0%,
+    rgba(252, 207, 69, 0.38) 45%,
+    rgba(60, 48, 28, 0.5) 100%
+  );
+}
+
+/* Landing — reference-style mesh (warm cream light / bronze-olive dark) */
+.landing-hero-bg {
+  background-color: #f5efe4;
+}
+
+.dark .landing-hero-bg {
+  background-color: #2f2820;
+}
+
+.landing-mesh-base {
+  background-image:
+    radial-gradient(ellipse 130% 85% at 50% -15%, rgba(255, 232, 210, 0.85), transparent 52%),
+    radial-gradient(ellipse 90% 70% at 100% 25%, rgba(186, 220, 255, 0.38), transparent 48%),
+    radial-gradient(ellipse 85% 65% at 0% 60%, rgba(255, 205, 180, 0.45), transparent 50%),
+    radial-gradient(ellipse 75% 55% at 85% 85%, rgba(196, 245, 220, 0.35), transparent 46%);
+}
+
+.dark .landing-mesh-base {
+  background-image:
+    radial-gradient(ellipse 120% 90% at 50% 0%, rgba(55, 45, 32, 0.95), transparent 58%),
+    radial-gradient(ellipse 95% 75% at 95% 30%, rgba(42, 52, 48, 0.55), transparent 50%),
+    radial-gradient(ellipse 80% 70% at 5% 55%, rgba(68, 52, 38, 0.5), transparent 52%),
+    radial-gradient(ellipse 70% 60% at 75% 90%, rgba(48, 58, 45, 0.4), transparent 48%);
+}
+
+.landing-mesh-blob {
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.92;
+  mix-blend-mode: multiply;
+}
+
+.dark .landing-mesh-blob {
+  mix-blend-mode: soft-light;
+  opacity: 0.85;
+}
+
+.landing-mesh-blob-1 {
+  width: min(68vw, 34rem);
+  height: min(68vw, 34rem);
+  left: -12%;
+  top: 8%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 183, 140, 0.75) 0%,
+    rgba(255, 220, 190, 0.35) 42%,
+    transparent 68%
+  );
+}
+
+.landing-mesh-blob-2 {
+  width: min(58vw, 30rem);
+  height: min(58vw, 30rem);
+  right: -14%;
+  top: 18%;
+  background: radial-gradient(
+    circle,
+    rgba(170, 230, 210, 0.65) 0%,
+    rgba(210, 248, 235, 0.28) 45%,
+    transparent 65%
+  );
+}
+
+.landing-mesh-blob-3 {
+  width: min(52vw, 26rem);
+  height: min(52vw, 26rem);
+  left: 8%;
+  bottom: -5%;
+  background: radial-gradient(
+    circle,
+    rgba(150, 205, 255, 0.55) 0%,
+    rgba(200, 230, 255, 0.22) 48%,
+    transparent 68%
+  );
+}
+
+.landing-mesh-blob-4 {
+  width: min(45vw, 22rem);
+  height: min(45vw, 22rem);
+  right: 18%;
+  bottom: 22%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 200, 150, 0.45) 0%,
+    rgba(255, 230, 200, 0.15) 50%,
+    transparent 62%
+  );
+}
+
+.landing-mesh-blob-5 {
+  width: min(40vw, 20rem);
+  height: min(40vw, 20rem);
+  left: 42%;
+  top: 38%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 235, 210, 0.4) 0%,
+    transparent 60%
+  );
+}
+
+.dark .landing-mesh-blob-1 {
+  background: radial-gradient(
+    circle,
+    rgba(120, 70, 45, 0.7) 0%,
+    rgba(55, 40, 28, 0.35) 48%,
+    transparent 72%
+  );
+}
+
+.dark .landing-mesh-blob-2 {
+  background: radial-gradient(
+    circle,
+    rgba(55, 68, 52, 0.65) 0%,
+    rgba(38, 44, 35, 0.32) 50%,
+    transparent 70%
+  );
+}
+
+.dark .landing-mesh-blob-3 {
+  background: radial-gradient(
+    circle,
+    rgba(65, 75, 85, 0.55) 0%,
+    rgba(45, 50, 58, 0.28) 52%,
+    transparent 72%
+  );
+}
+
+.dark .landing-mesh-blob-4 {
+  background: radial-gradient(
+    circle,
+    rgba(110, 85, 55, 0.45) 0%,
+    rgba(50, 42, 32, 0.25) 55%,
+    transparent 68%
+  );
+}
+
+.dark .landing-mesh-blob-5 {
+  background: radial-gradient(
+    circle,
+    rgba(90, 75, 55, 0.35) 0%,
+    transparent 65%
+  );
+}
+
+.landing-mesh-vignette {
+  background: radial-gradient(
+    ellipse 85% 75% at 50% 45%,
+    transparent 0%,
+    rgba(245, 239, 228, 0.25) 88%,
+    rgba(235, 225, 210, 0.45) 100%
+  );
+  pointer-events: none;
+}
+
+.dark .landing-mesh-vignette {
+  background: radial-gradient(
+    ellipse 85% 75% at 50% 45%,
+    transparent 0%,
+    rgba(35, 30, 24, 0.35) 85%,
+    rgba(20, 17, 14, 0.65) 100%
+  );
+}
+
+/* Gold/champagne glowing border on hero input (reference) */
+.landing-hero-input-shell {
+  border-radius: 1.85rem;
+  background: linear-gradient(
+    135deg,
+    rgba(212, 175, 55, 0.55) 0%,
+    rgba(245, 230, 200, 0.9) 35%,
+    rgba(218, 180, 90, 0.5) 70%,
+    rgba(184, 134, 11, 0.45) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.2),
+    0 12px 48px rgba(180, 130, 60, 0.14),
+    0 4px 24px rgba(212, 175, 55, 0.08);
+}
+
+.dark .landing-hero-input-shell {
+  background: linear-gradient(
+    135deg,
+    rgba(180, 145, 70, 0.4) 0%,
+    rgba(90, 75, 50, 0.55) 45%,
+    rgba(140, 110, 55, 0.35) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.15),
+    0 16px 56px rgba(0, 0, 0, 0.45),
+    0 0 40px rgba(212, 175, 55, 0.06);
+}
+
+/* LuxeGen — Organic Luxury light: silk-like radial mesh (no harsh linear gradient) */
+.luxe-dashboard-shell {
+  background-color: #fdfbfb;
+  color: #0f172a;
+  transition:
+    background-color 0.45s ease,
+    color 0.35s ease;
+}
+
+/* Dark: base #261E01 + mesh palette (#531D01, #FCCF45, #DDFFE2, #BFE4FF) */
+.dark .luxe-dashboard-shell {
+  background-color: #261e01;
+  color: #fafaf9;
+}
+
+/* Light: color orbs are animated in the DOM (LandingPage); keep mesh clear */
+.luxe-dashboard-mesh {
+  background: transparent;
+}
+
+/* LuxeGen working page — warm cream, amber, pure gold mesh (luxury gold feel; palette #FCCF45 / #d4af37) */
+.luxe-working-mesh {
+  background-color: #f5ebe0;
+  background-image:
+    radial-gradient(ellipse 100% 75% at 50% -8%, rgba(252, 207, 69, 0.28), transparent 48%),
+    radial-gradient(ellipse 120% 90% at 10% 15%, rgba(255, 248, 235, 0.95), transparent 52%),
+    radial-gradient(ellipse 90% 75% at 92% 8%, rgba(252, 237, 210, 0.75), transparent 48%),
+    radial-gradient(ellipse 85% 70% at 50% 95%, rgba(245, 230, 200, 0.65), transparent 55%),
+    radial-gradient(circle at 72% 42%, rgba(212, 175, 55, 0.2), transparent 44%),
+    radial-gradient(ellipse 60% 50% at 25% 70%, rgba(230, 200, 150, 0.14), transparent 46%);
+}
+
+.dark .luxe-working-mesh {
+  background-color: #2a2419;
+  background-image:
+    radial-gradient(ellipse 95% 70% at 50% 0%, rgba(252, 207, 69, 0.12), transparent 50%),
+    radial-gradient(ellipse 110% 85% at 15% 12%, rgba(60, 48, 32, 0.9), transparent 52%),
+    radial-gradient(ellipse 95% 70% at 88% 10%, rgba(80, 62, 38, 0.55), transparent 48%),
+    radial-gradient(ellipse 80% 65% at 50% 100%, rgba(38, 30, 18, 0.85), transparent 52%),
+    radial-gradient(circle at 65% 40%, rgba(212, 175, 55, 0.14), transparent 40%),
+    radial-gradient(ellipse 55% 45% at 20% 72%, rgba(100, 82, 50, 0.35), transparent 48%);
+}
+
+/* ThinkHall-style luxe chrome: layered soft lift + warm gold bloom */
+.luxe-thinkhall-surface {
+  box-shadow:
+    0 40px 100px -28px rgba(35, 28, 18, 0.13),
+    0 20px 52px -20px rgba(212, 175, 55, 0.12),
+    0 10px 28px -10px rgba(62, 52, 40, 0.07),
+    inset 0 1px 0 rgba(255, 252, 248, 0.94);
+}
+
+.dark .luxe-thinkhall-surface {
+  box-shadow:
+    0 40px 100px -24px rgba(0, 0, 0, 0.52),
+    0 0 56px -14px rgba(252, 207, 69, 0.07),
+    inset 0 1px 0 rgba(252, 207, 69, 0.09);
+}
+
+/* Slow drift keyframes — light-mode organic orbs (#EFE9B4, #FBBA98, #FFFEBF, #DDFFE2, #BFE4FF) */
+@keyframes luxe-orb-drift-1 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(5%, -6%, 0) scale(1.09);
+  }
+  66% {
+    transform: translate3d(-4%, 4%, 0) scale(0.94);
+  }
+}
+
+@keyframes luxe-orb-drift-2 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  40% {
+    transform: translate3d(-6%, 5%, 0) scale(1.07);
+  }
+  70% {
+    transform: translate3d(4%, -4%, 0) scale(0.97);
+  }
+}
+
+@keyframes luxe-orb-drift-3 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  25% {
+    transform: translate3d(3%, 6%, 0) scale(1.05);
+  }
+  50% {
+    transform: translate3d(-5%, -3%, 0) scale(0.96);
+  }
+  75% {
+    transform: translate3d(4%, -5%, 0) scale(1.04);
+  }
+}
+
+@keyframes luxe-orb-drift-4 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  30% {
+    transform: translate3d(-5%, -5%, 0) scale(1.08);
+  }
+  60% {
+    transform: translate3d(6%, 3%, 0) scale(0.95);
+  }
+}
+
+@keyframes luxe-orb-drift-5 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  35% {
+    transform: translate3d(6%, 4%, 0) scale(0.96);
+  }
+  65% {
+    transform: translate3d(-4%, -6%, 0) scale(1.06);
+  }
+}
+
+.luxe-light-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+  filter: blur(100px);
+  mix-blend-mode: soft-light;
+  opacity: 0.62;
+}
+
+.luxe-light-orb-1 {
+  width: min(58vw, 32rem);
+  height: min(58vw, 32rem);
+  top: -14%;
+  left: -16%;
+  background: #efe9b4;
+  animation: luxe-orb-drift-1 42s ease-in-out infinite;
+}
+
+.luxe-light-orb-2 {
+  width: min(52vw, 28rem);
+  height: min(52vw, 28rem);
+  top: -8%;
+  right: -14%;
+  background: #fbba98;
+  animation: luxe-orb-drift-2 36s ease-in-out infinite;
+  animation-delay: -4s;
+}
+
+.luxe-light-orb-3 {
+  width: min(48vw, 26rem);
+  height: min(48vw, 26rem);
+  top: 38%;
+  left: 28%;
+  background: #fffebf;
+  animation: luxe-orb-drift-3 50s ease-in-out infinite;
+  animation-delay: -8s;
+}
+
+.luxe-light-orb-4 {
+  width: min(54vw, 30rem);
+  height: min(54vw, 30rem);
+  bottom: -12%;
+  left: -10%;
+  background: #ddffe2;
+  animation: luxe-orb-drift-4 44s ease-in-out infinite;
+  animation-delay: -12s;
+}
+
+.luxe-light-orb-5 {
+  width: min(50vw, 27rem);
+  height: min(50vw, 27rem);
+  bottom: -6%;
+  right: -12%;
+  background: #bfe4ff;
+  animation: luxe-orb-drift-5 38s ease-in-out infinite;
+  animation-delay: -6s;
+}
+
+/* Dark mesh: static radial layers (same hex palette) */
+.dark .luxe-dashboard-mesh {
+  background-image:
+    radial-gradient(ellipse 120% 90% at 50% 110%, rgba(38, 30, 1, 0.95), transparent 52%),
+    radial-gradient(ellipse 90% 70% at 10% 15%, rgba(83, 29, 1, 0.55), transparent 48%),
+    radial-gradient(ellipse 85% 65% at 92% 18%, rgba(83, 29, 1, 0.4), transparent 46%),
+    radial-gradient(circle at 55% 35%, rgba(252, 207, 69, 0.14), transparent 42%),
+    radial-gradient(ellipse 70% 55% at 20% 75%, rgba(221, 255, 226, 0.1), transparent 45%),
+    radial-gradient(ellipse 65% 50% at 88% 72%, rgba(191, 228, 255, 0.12), transparent 44%);
+}
+
+/* Dark: slow-moving blurred orbs (531D01, FCCF45, DDFFE2, BFE4FF, 261E01) */
+.luxe-dark-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+  filter: blur(105px);
+}
+
+.luxe-dark-orb-1 {
+  width: min(56vw, 31rem);
+  height: min(56vw, 31rem);
+  top: -12%;
+  left: -14%;
+  background: #531d01;
+  mix-blend-mode: soft-light;
+  opacity: 0.55;
+  animation: luxe-orb-drift-1 41s ease-in-out infinite;
+}
+
+.luxe-dark-orb-2 {
+  width: min(44vw, 24rem);
+  height: min(44vw, 24rem);
+  top: 5%;
+  right: -8%;
+  background: #fccf45;
+  mix-blend-mode: screen;
+  opacity: 0.2;
+  animation: luxe-orb-drift-2 35s ease-in-out infinite;
+  animation-delay: -5s;
+}
+
+.luxe-dark-orb-3 {
+  width: min(48vw, 26rem);
+  height: min(48vw, 26rem);
+  top: 42%;
+  left: 22%;
+  background: #ddffe2;
+  mix-blend-mode: screen;
+  opacity: 0.14;
+  animation: luxe-orb-drift-3 48s ease-in-out infinite;
+  animation-delay: -10s;
+}
+
+.luxe-dark-orb-4 {
+  width: min(52vw, 28rem);
+  height: min(52vw, 28rem);
+  bottom: -10%;
+  right: -12%;
+  background: #bfe4ff;
+  mix-blend-mode: screen;
+  opacity: 0.16;
+  animation: luxe-orb-drift-4 43s ease-in-out infinite;
+  animation-delay: -7s;
+}
+
+.luxe-dark-orb-5 {
+  width: min(62vw, 34rem);
+  height: min(62vw, 34rem);
+  bottom: -18%;
+  left: -18%;
+  background: #261e01;
+  mix-blend-mode: normal;
+  opacity: 0.5;
+  animation: luxe-orb-drift-5 39s ease-in-out infinite;
+  animation-delay: -3s;
+}

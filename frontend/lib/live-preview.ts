@@ -15,6 +15,12 @@ const SERVER_BUSY_LIVE_CODE = `const ServerBusy = () => (
   </div>
 );
 render(<ServerBusy />);`;
+const OPTIMIZING_LIVE_CODE = `const Optimizing = () => (
+  <div className="flex min-h-[12rem] items-center justify-center rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    Optimizing Code...
+  </div>
+);
+render(<Optimizing />);`;
 
 const STREAMING_COMPOSING_MARKER = "Streaming in progress";
 
@@ -123,50 +129,6 @@ function trimAfterMainComponentBlock(source: string): string {
   return source;
 }
 
-function splitTopLevelJsxNodes(source: string): string[] {
-  const text = source.trim();
-  const nodes: string[] = [];
-  let depth = 0;
-  let inTag = false;
-  let nodeStart = -1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === "<") {
-      if (depth === 0 && nodeStart === -1) {
-        nodeStart = i;
-      }
-      inTag = true;
-      if (!text.startsWith("</", i) && !text.startsWith("<!", i) && !text.startsWith("<?", i)) {
-        depth += 1;
-      } else if (text.startsWith("</", i)) {
-        depth -= 1;
-      }
-    } else if (ch === ">" && inTag) {
-      inTag = false;
-      if (text[i - 1] === "/" && depth > 0) {
-        depth -= 1;
-      }
-      if (depth === 0 && nodeStart >= 0) {
-        nodes.push(text.slice(nodeStart, i + 1).trim());
-        nodeStart = -1;
-      }
-    }
-  }
-  return nodes.filter(Boolean);
-}
-
-function wrapMultipleTopLevelJsx(source: string): string {
-  const trimmed = source.trim();
-  if (!trimmed.startsWith("<")) {
-    return source;
-  }
-  const nodes = splitTopLevelJsxNodes(trimmed);
-  if (nodes.length <= 1) {
-    return source;
-  }
-  return `<>${nodes.join("\n")}</>`;
-}
-
 /**
  * Strip leading prose / markdown that is not TS/JS/JSX (explanations before the code).
  */
@@ -262,7 +224,9 @@ function stripViewportHeightCaps(source: string): string {
 }
 
 function stripMarkdownFences(source: string): string {
-  return removeStreamCodeFences(source).replace(/^(tsx|jsx|typescript|javascript)\s*\n/i, "");
+  return removeStreamCodeFences(source)
+    .replace(/^(tsx|jsx|typescript|javascript)\s*\n/i, "")
+    .replace(/\b(?:jsx|tsx|javascript|typescript)\b/gi, "");
 }
 
 /** RSC directives break react-live's eval; streamed Next code often includes them. */
@@ -270,6 +234,270 @@ function stripRscDirectives(source: string): string {
   return source
     .replace(/^\s*["']use client["']\s*;?\s*/gim, "")
     .replace(/^\s*["']use server["']\s*;?\s*/gim, "");
+}
+
+/**
+ * Strip a leading `{ ... }` blob when it looks like an API/JSON error (not TS code).
+ * Prevents JSON from being fed to the import/export extractor.
+ */
+function stripLeadingBracedJsonIfApiError(text: string): string {
+  const s = text.trimStart();
+  if (!s.startsWith("{")) {
+    return text;
+  }
+  const probe = s.slice(0, Math.min(600, s.length));
+  if (!/"error"|"message"|"status"|"code"|"details"|"statusCode"/i.test(probe)) {
+    return text;
+  }
+
+  let depth = 0;
+  let i = 0;
+  let inStr: "'" | '"' | "`" | null = null;
+  let escaped = false;
+
+  for (; i < s.length; i += 1) {
+    const c = s[i];
+    if (inStr) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (c === inStr) {
+        inStr = null;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") {
+      inStr = c as "'" | '"' | "`";
+      continue;
+    }
+    if (c === "{") {
+      depth += 1;
+    } else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        i += 1;
+        break;
+      }
+    }
+  }
+
+  if (depth !== 0) {
+    return text;
+  }
+
+  return s.slice(i).trimStart();
+}
+
+/** Index of the last `export default` keyword start in `source`. */
+function findLastExportDefaultKeywordStart(source: string): number {
+  const re = /\bexport\s+default\b/g;
+  let last = -1;
+  for (const m of source.matchAll(re)) {
+    last = m.index ?? -1;
+  }
+  return last;
+}
+
+/**
+ * End index (exclusive) after the last complete `export default …` statement.
+ * Returns null if the declaration looks incomplete (streaming).
+ */
+function endExclusiveAfterExportDefault(source: string, exportKeywordStart: number): number | null {
+  const sliced = source.slice(exportKeywordStart);
+  const kw = sliced.match(/^export\s+default\s*/);
+  if (!kw) {
+    return null;
+  }
+  let i = exportKeywordStart + kw[0].length;
+  while (i < source.length && /\s/.test(source[i])) {
+    i += 1;
+  }
+
+  const tail = source.slice(i);
+
+  if (/^async\s+function\b/.test(tail)) {
+    const skip = tail.match(/^async\s+function\b/)?.[0].length ?? 0;
+    i += skip;
+    while (i < source.length && /\s/.test(source[i])) {
+      i += 1;
+    }
+  }
+
+  const afterWs = source.slice(i);
+
+  if (/^function\b/.test(afterWs)) {
+    const openBrace = source.indexOf("{", i);
+    if (openBrace < 0) {
+      return null;
+    }
+    const closeBrace = findMatchingBraceIndex(source, openBrace);
+    if (closeBrace < 0) {
+      return null;
+    }
+    return closeBrace + 1;
+  }
+
+  if (/^class\b/.test(afterWs)) {
+    const openBrace = source.indexOf("{", i);
+    if (openBrace < 0) {
+      return null;
+    }
+    const closeBrace = findMatchingBraceIndex(source, openBrace);
+    if (closeBrace < 0) {
+      return null;
+    }
+    return closeBrace + 1;
+  }
+
+  let depth = 0;
+  let bracket = 0;
+  let inStr: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  let jsxDepth = 0;
+
+  for (let j = i; j < source.length; j += 1) {
+    const c = source[j];
+    if (inStr) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (c === inStr) {
+        inStr = null;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") {
+      inStr = c as "'" | '"' | "`";
+      continue;
+    }
+    if (c === "/" && source[j + 1] === "/") {
+      const nl = source.indexOf("\n", j);
+      j = nl < 0 ? source.length - 1 : nl;
+      continue;
+    }
+    if (c === "/" && source[j + 1] === "*") {
+      const endComment = source.indexOf("*/", j + 2);
+      j = endComment < 0 ? source.length - 1 : endComment + 1;
+      continue;
+    }
+
+    if (c === "<" && !/\s/.test(source[j + 1] ?? "") && source[j + 1] !== "/") {
+      jsxDepth += 1;
+      continue;
+    }
+    if (c === ">" && jsxDepth > 0) {
+      jsxDepth -= 1;
+      continue;
+    }
+
+    if (jsxDepth > 0) {
+      continue;
+    }
+
+    if (c === "(") {
+      depth += 1;
+    } else if (c === ")") {
+      depth -= 1;
+    } else if (c === "[") {
+      bracket += 1;
+    } else if (c === "]") {
+      bracket -= 1;
+    }
+
+    if (depth === 0 && bracket === 0 && c === ";") {
+      return j + 1;
+    }
+  }
+
+  if (depth === 0 && bracket === 0 && jsxDepth === 0) {
+    return source.length;
+  }
+
+  return null;
+}
+
+/**
+ * Strict slice: from first `import` through end of last `export default`.
+ * If either boundary is missing or export default is incomplete, returns "".
+ */
+function extractStrictImportThroughLastExportDefault(source: string): string {
+  const input = source.trim();
+  if (!input) {
+    return "";
+  }
+
+  const firstImportIdx = input.search(/^\s*import\b/m);
+  const importIdx =
+    firstImportIdx >= 0 ? firstImportIdx : input.search(/\bimport\b/);
+  if (importIdx < 0) {
+    return "";
+  }
+
+  const lastExportStart = findLastExportDefaultKeywordStart(input);
+  if (lastExportStart < 0 || lastExportStart < importIdx) {
+    return "";
+  }
+
+  const endExclusive = endExclusiveAfterExportDefault(input, lastExportStart);
+  if (endExclusive === null || endExclusive <= importIdx) {
+    return "";
+  }
+
+  return input.slice(importIdx, endExclusive).trim();
+}
+
+function splitTopLevelJsxNodes(source: string): string[] {
+  const text = source.trim();
+  const nodes: string[] = [];
+  let depth = 0;
+  let inTag = false;
+  let nodeStart = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "<") {
+      if (depth === 0 && nodeStart === -1) {
+        nodeStart = i;
+      }
+      inTag = true;
+      if (!text.startsWith("</", i) && !text.startsWith("<!", i) && !text.startsWith("<?", i)) {
+        depth += 1;
+      } else if (text.startsWith("</", i)) {
+        depth -= 1;
+      }
+    } else if (ch === ">" && inTag) {
+      inTag = false;
+      if (text[i - 1] === "/" && depth > 0) {
+        depth -= 1;
+      }
+      if (depth === 0 && nodeStart >= 0) {
+        nodes.push(text.slice(nodeStart, i + 1).trim());
+        nodeStart = -1;
+      }
+    }
+  }
+  return nodes.filter(Boolean);
+}
+
+function wrapMultipleTopLevelJsx(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith("<")) {
+    return source;
+  }
+  const nodes = splitTopLevelJsxNodes(trimmed);
+  if (nodes.length <= 1) {
+    return source;
+  }
+  return `<>${nodes.join("\n")}</>`;
 }
 
 function wrapAsDefaultFunctionalComponent(body: string): string {
@@ -291,19 +519,34 @@ export default StreamPreview;
 `;
 }
 
+/** From first `import` onward, or full cleaned text if no import yet (streaming partial). */
+function extractPermissiveCodeWindow(source: string): string {
+  const input = source.trim();
+  if (!input) {
+    return "";
+  }
+  const importIdx = input.search(/\bimport\b/);
+  if (importIdx >= 0) {
+    return input.slice(importIdx).trim();
+  }
+  return input;
+}
+
 /**
- * Sanitize streamed text: strip fences immediately, drop prose/noise, strip RSC/imports where needed,
- * optionally wrap as a default-export component when there is JSX-like content but no export default.
+ * Sanitize for live preview while streaming: same noise stripping as strict mode, but keep partial
+ * code (no requirement for a complete `export default`). Used when Force Render is on.
  */
-export function sanitizeCode(streamChunk: string): string {
-  if (!streamChunk) return streamChunk;
+export function sanitizeCodePermissive(streamChunk: string): string {
+  if (!streamChunk) return "";
   let out = removeStreamCodeFences(streamChunk);
+  out = stripLeadingBracedJsonIfApiError(out);
   out = stripLeadingStreamNoiseChars(out);
   out = stripFirstLineNonAlphaPrefix(out);
   out = stripAggressivePrefixBeforeCodeKeyword(out);
   out = stripRscDirectives(out);
   out = stripLeadingNonCodeLines(out);
   out = stripNonCodeNoiseWithRegex(out);
+  out = extractPermissiveCodeWindow(out);
   out = stripImportLines(out);
   out = stripViewportHeightCaps(out);
   out = trimAfterMainComponentBlock(out);
@@ -322,6 +565,36 @@ export function sanitizeCode(streamChunk: string): string {
       out = wrapAsDefaultFunctionalComponent(wrapMultipleTopLevelJsx(out));
     }
   }
+  return out;
+}
+
+/**
+ * Sanitize streamed text: strip API/JSON noise, then keep ONLY the strict region from the first
+ * `import` through the end of the last `export default`. If that region cannot be parsed, returns ""
+ * so the preview layer does not attempt to render garbage (e.g. JSON error bodies).
+ */
+export function sanitizeCode(streamChunk: string): string {
+  if (!streamChunk) return "";
+  let out = removeStreamCodeFences(streamChunk);
+  out = stripLeadingBracedJsonIfApiError(out);
+  out = stripLeadingStreamNoiseChars(out);
+  out = stripFirstLineNonAlphaPrefix(out);
+  out = stripAggressivePrefixBeforeCodeKeyword(out);
+  out = stripRscDirectives(out);
+  out = stripLeadingNonCodeLines(out);
+  out = stripNonCodeNoiseWithRegex(out);
+
+  const strict = extractStrictImportThroughLastExportDefault(out);
+  if (!strict.trim()) {
+    return "";
+  }
+
+  out = strict;
+  out = stripImportLines(out);
+  out = stripViewportHeightCaps(out);
+  out = trimAfterMainComponentBlock(out);
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+
   return out;
 }
 
@@ -353,12 +626,20 @@ function extractDefaultExportName(source: string): string | null {
   return null;
 }
 
+export type AppendMissingDefaultExportOptions = {
+  /** Use permissive sanitize + defer shell wrapping to prepareStreamedCodeForLive (Force Render / streaming). */
+  permissive?: boolean;
+};
+
 /**
  * Appends a default export to streamed code when missing, so preview can keep rendering
  * during partial generations instead of blanking.
  */
-export function appendMissingDefaultExport(raw: string): string {
-  const cleaned = sanitizeCode(raw);
+export function appendMissingDefaultExport(
+  raw: string,
+  options?: AppendMissingDefaultExportOptions,
+): string {
+  const cleaned = options?.permissive ? sanitizeCodePermissive(raw) : sanitizeCode(raw);
   if (!cleaned.trim()) {
     return cleaned;
   }
@@ -369,12 +650,15 @@ export function appendMissingDefaultExport(raw: string): string {
   if (inferred) {
     return `${cleaned}\n\nexport default ${inferred};`;
   }
+  if (options?.permissive) {
+    return cleaned;
+  }
   return `${cleaned}
 
 function GeneratedComponent() {
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-      Generated code is incomplete. Keep streaming for full render.
+      Optimizing Code...
     </div>
   );
 }
@@ -402,7 +686,7 @@ function ensureDefaultExport(source: string): string {
 function GeneratedComponent() {
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-      Generated code is incomplete. Keep streaming for full render.
+      Optimizing Code...
     </div>
   );
 }
@@ -469,6 +753,13 @@ function isUnavailableServiceError(text: string): boolean {
 
 /** Detect Gemini/stream errors embedded in streamed text (e.g. after non-JSON error path). */
 export function detectStreamUnavailableInText(raw: string): boolean {
+  const unfenced = stripLeadingBracedJsonIfApiError(removeStreamCodeFences(raw));
+  if (extractStreamError(unfenced) && isUnavailableServiceError(unfenced)) {
+    return true;
+  }
+  if (isUnavailableServiceError(unfenced)) {
+    return true;
+  }
   const cleaned = sanitizeCode(raw);
   if (extractStreamError(cleaned) && isUnavailableServiceError(cleaned)) {
     return true;
@@ -684,84 +975,96 @@ export function prepareStreamedCodeForLive(
   normalizedRaw: string,
   options?: PrepareStreamedLiveOptions,
 ): string {
-  const cleaned = normalizedRaw.trim();
-  const streamError = extractStreamError(cleaned);
-  if (streamError) {
-    if (isUnavailableServiceError(streamError)) {
-      return SERVER_BUSY_LIVE_CODE;
-    }
-    const safeMessage = JSON.stringify(streamError);
-    return `const StreamError = () => (
+  try {
+    const cleaned = normalizedRaw.trim();
+    const streamError = extractStreamError(cleaned);
+    if (streamError) {
+      if (isUnavailableServiceError(streamError)) {
+        return SERVER_BUSY_LIVE_CODE;
+      }
+      const safeMessage = JSON.stringify(streamError);
+      return `const StreamError = () => (
   <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
     <p className="font-semibold">Generation failed</p>
     <p className="mt-1 break-words">{${safeMessage}}</p>
   </div>
 );
 render(<StreamError />);`;
-  }
-  if (isUnavailableServiceError(cleaned)) {
-    return SERVER_BUSY_LIVE_CODE;
-  }
-  let withoutImports = applyPermissiveStreamFixes(cleaned);
-  if (!withoutImports) {
-    return LIVE_PREVIEW_WAITING_CODE;
-  }
-  const forceRender = Boolean(options?.forceRender);
-  if (hasLikelyIncompleteSyntax(withoutImports) && !forceRender) {
-    return composingLiveCode(
-      "Generated code is still incomplete. Waiting for valid syntax before rendering.",
-    );
-  }
-  if (hasLikelyIncompleteSyntax(withoutImports) && forceRender) {
-    withoutImports = closeUnbalancedPairs(appendTemporaryClosingTagsForOpenElements(withoutImports));
-  }
-  const hasExport =
-    /export\s+default\s+function\s+\w+\s*[<(]/.test(withoutImports) ||
-    /export\s+default\s+\w+\s*;?/.test(withoutImports);
+    }
+    if (isUnavailableServiceError(cleaned)) {
+      return SERVER_BUSY_LIVE_CODE;
+    }
+    let withoutImports = applyPermissiveStreamFixes(cleaned);
+    if (!withoutImports) {
+      return LIVE_PREVIEW_WAITING_CODE;
+    }
+    const forceRender = Boolean(options?.forceRender);
+    if (hasLikelyIncompleteSyntax(withoutImports) && !forceRender) {
+      return composingLiveCode(
+        "Generated code is still incomplete. Waiting for valid syntax before rendering.",
+      );
+    }
+    if (hasLikelyIncompleteSyntax(withoutImports) && forceRender) {
+      withoutImports = closeUnbalancedPairs(
+        appendTemporaryClosingTagsForOpenElements(withoutImports),
+      );
+    }
+    const hasExport =
+      /export\s+default\s+function\s+\w+\s*[<(]/.test(withoutImports) ||
+      /export\s+default\s+\w+\s*;?/.test(withoutImports);
 
-  if (forceRender && !hasExport) {
-    withoutImports = wrapInTemporaryDefaultExport(withoutImports);
-  }
+    if (forceRender && !hasExport) {
+      const hasInferredExportCandidate =
+        /\bfunction\s+[A-Za-z_$][\w$]*\s*[<(]/.test(withoutImports) ||
+        /\bconst\s+[A-Za-z_$][\w$]*\s*=/.test(withoutImports);
+      if (!hasInferredExportCandidate) {
+        withoutImports = wrapInTemporaryDefaultExport(withoutImports);
+      }
+    }
 
-  const withExport = ensureDefaultExport(withoutImports);
-  const componentName = extractDefaultExportName(withExport);
-  if (componentName) {
-    const body = withExport
-      .replace(/export\s+default\s+function\s+/g, "function ")
-      .replace(/export\s+default\s+/g, "");
-    return `${body}\n\n${buildSafeRenderBlock(componentName)}`;
-  }
+    const withExport = ensureDefaultExport(withoutImports);
+    const componentName = extractDefaultExportName(withExport);
+    if (componentName) {
+      const body = withExport
+        .replace(/export\s+default\s+function\s+/g, "function ")
+        .replace(/export\s+default\s+/g, "");
+      return `${body}\n\n${buildSafeRenderBlock(componentName)}`;
+    }
 
-  const jsxStart = withoutImports.indexOf("<");
-  const jsxEnd = withoutImports.lastIndexOf(">");
-  const hasLikelyJsxFragment = jsxStart >= 0 && jsxEnd > jsxStart;
-  if (hasLikelyJsxFragment) {
-    const jsxFragment = appendTemporaryClosingTagsForOpenElements(
-      withoutImports.slice(jsxStart, jsxEnd + 1).trim(),
-    );
-    return `try {
+    const jsxStart = withoutImports.indexOf("<");
+    const jsxEnd = withoutImports.lastIndexOf(">");
+    const hasLikelyJsxFragment = jsxStart >= 0 && jsxEnd > jsxStart;
+    if (hasLikelyJsxFragment) {
+      const jsxFragment = appendTemporaryClosingTagsForOpenElements(
+        withoutImports.slice(jsxStart, jsxEnd + 1).trim(),
+      );
+      return `try {
   render(
   <div className="min-h-[12rem]">
     ${jsxFragment}
   </div>
   );
 } catch (_e) {
-  render(<div className="min-h-[12rem] text-sm text-zinc-500">Preview updating…</div>);
+  render(<div className="min-h-[12rem] text-sm text-zinc-500">Optimizing Code...</div>);
 }`;
-  }
+    }
 
-  if (forceRender) {
-    const wrapped = wrapInTemporaryDefaultExport(
-      stripViewportHeightCaps(stripImportLines(cleaned)).trim(),
-    );
-    const wStripped = stripImportLines(wrapped).trim();
-    const forcedName =
-      wStripped.match(/export\s+default\s+function\s+(\w+)\s*[<(]/)?.[1] || "__StreamPartialPreview";
-    const body = wStripped
-      .replace(/export\s+default\s+function\s+/g, "function ")
-      .replace(/export\s+default\s+/g, "");
-    return `${body}\n\nrender(<${forcedName} />);`;
-  }
+    if (forceRender) {
+      const wrapped = wrapInTemporaryDefaultExport(
+        stripViewportHeightCaps(stripImportLines(cleaned)).trim(),
+      );
+      const wStripped = stripImportLines(wrapped).trim();
+      const forcedName =
+        wStripped.match(/export\s+default\s+function\s+(\w+)\s*[<(]/)?.[1] ||
+        "__StreamPartialPreview";
+      const body = wStripped
+        .replace(/export\s+default\s+function\s+/g, "function ")
+        .replace(/export\s+default\s+/g, "");
+      return `${body}\n\nrender(<${forcedName} />);`;
+    }
 
-  return composingLiveCode();
+    return composingLiveCode();
+  } catch {
+    return OPTIMIZING_LIVE_CODE;
+  }
 }

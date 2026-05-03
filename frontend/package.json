@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 3001",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "build:prod": "next build",
-    "start:prod": "next start -p 3001"
+    "start:prod": "next start"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",
@@ -22,6 +22,7 @@
     "react-dom": "19.1.0",
     "react-live": "^4.1.8",
     "react-syntax-highlighter": "^16.1.1",
+    "sucrase": "3.35.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

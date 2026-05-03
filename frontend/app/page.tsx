@@ -1,6 +1,12 @@
-import { DesignerWorkspace } from "@/components/features/workspace/DesignerWorkspace";
+import type { Metadata } from "next";
+import { LandingPage } from "@/components/landing/LandingPage";
+
+export const metadata: Metadata = {
+  title: "LuxeGen — AI-Powered Luxury UI",
+  description:
+    "Prompt, iterate, and refine — your live preview updates as components take shape.",
+};
 
 export default function Home() {
-  // Trigger fresh production deploy with config update.
-  return <DesignerWorkspace />;
+  return <LandingPage />;
 }

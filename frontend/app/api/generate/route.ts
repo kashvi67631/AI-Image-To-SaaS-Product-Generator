@@ -1,191 +1,82 @@
-import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { designStyleDirectives } from "@/lib/generation/design-style-directives";
-import {
-  generateRequestSchema,
-  type DesignStyle,
-} from "@/lib/validation/generate-request";
+import { resolveProxyBackendBaseUrlMetadata } from "@/lib/server/backend-base-url";
+import { fetchWithLocalhostIpv4Fallback } from "@/lib/server/fetch-with-localhost-ipv4-fallback";
+import { logUpstreamProxyFailure } from "@/lib/server/log-upstream-failure";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
-const DEFAULT_GEMINI_MODEL = "gemini-1.5-flash";
-const PREFERRED_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"] as const;
 
-function resolveGeminiModel(): string {
-  const configured =
-    process.env.GEMINI_MODEL?.trim() || process.env.GEMINI_MODEL_NAME?.trim();
-  const raw = configured || DEFAULT_GEMINI_MODEL;
-  // Guard against accidentally passing values like "models/gemini-1.5-flash".
-  return raw.replace(/^models\//, "");
-}
-
-function resolveModelCandidates(primaryModel: string): string[] {
-  const candidates = [primaryModel, ...PREFERRED_MODELS];
-  return candidates.filter((model, index) => candidates.indexOf(model) === index);
-}
-
-function buildUserPrompt(args: {
-  prompt: string;
-  previousCode?: string;
-  systemInstruction: string;
-}): string {
-  const { prompt, previousCode, systemInstruction } = args;
-  const prefix = `System instructions:\n${systemInstruction}\n\n`;
-  if (previousCode?.trim()) {
-    return `${prefix}Refine this existing component based on the new request. Return full updated TSX only.\n\nCurrent component:\n${previousCode}\n\nRefinement request:\n${prompt}`;
-  }
-  return `${prefix}${prompt}`;
-}
-
-function buildSystemInstruction(designStyle: DesignStyle): string {
-  const styleLabel = designStyle.replace(/-/g, " ");
-  const styleDirective = designStyleDirectives[designStyle];
-
-  return `You are a Senior UI/UX Architect and expert React + TypeScript + Tailwind engineer. You design and ship interfaces that feel intentional, accessible, and production-ready - not generic boilerplate.
-
-Design style for this brief: "${styleLabel}".
-You MUST follow this visual direction for layout, color, typography, spacing, and decoration:
-${styleDirective}
-
-THEME-SPECIFIC TAILWIND IS LAW
-- When the style block lists NON-NEGOTIABLE TAILWIND utilities, you MUST include those exact class strings (e.g. font-serif, text-amber-600, tracking-widest for luxury-minimal; rounded-2xl, bg-indigo-600, shadow-2xl for b2b-saas) on GeneratedComponent as described. Do not substitute close synonyms unless you also keep the required classes on the specified elements.
-
-ANTI-GENERIC / ANTI-DEFAULT-PURPLE
-- Do NOT fall back to a generic purple/violet-on-white minimal landing template: no violet-500/violet-600 hero gradients on white as the default look, no interchangeable SaaS purple blob backgrounds.
-- Let the selected "${styleLabel}" drive palette and shape language; use stone/slate/neutral bases when the style calls for restraint, and use the mandated accent utilities from the style block.
-
-RESPONSIVE & MOBILE-FIRST
-- Build for small screens first, then enhance with sm:, md:, and lg: breakpoints.
-- Use fluid spacing and typography; avoid fixed widths that break on phones.
-- Ensure tap targets, readable line length, and stacks that reflow cleanly (e.g. grids that become single-column on mobile).
-- Test mentally: navigation, hero, cards, and CTAs must remain usable and balanced at narrow widths.
-
-ALLOWED LIBRARIES FOR THIS OUTPUT
-- react
-- lucide-react
-- framer-motion
-- Do NOT import any other external package or local file path.
-
-COMPONENT CONTRACT (MANDATORY)
-- Start code with: import React from "react";
-- Wrap the entire UI in one component named GeneratedComponent.
-- End code with exactly: export default GeneratedComponent;
-- Do not emit "export default function ...".
-- The output must be raw TSX only. Do not include markdown backticks or fences.
-
-OUTPUT RULES
-- Return only valid TSX for a single component file. No commentary outside the code.
-- Match the user's product narrative and hierarchy; use semantic HTML and accessible patterns (landmarks, headings, aria where needed).
-- Style exclusively with Tailwind utility classes so the result matches the style directive.`;
-}
-
+/**
+ * Proxies JSON body to the backend POST /api/generate and streams plain text back.
+ * No GEMINI_API_KEY in this Next.js process — key stays on the backend only.
+ */
 export async function POST(req: Request): Promise<Response> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  console.log("[/api/generate] GEMINI_API_KEY present:", Boolean(apiKey));
-  if (!apiKey) {
-    console.error("[/api/generate] Missing GEMINI_API_KEY in environment");
+  const { base, source, forced } = resolveProxyBackendBaseUrlMetadata();
+  if (process.env.NODE_ENV === "development") {
+    console.log("[api/generate] upstream base:", base, "| source:", source, forced ? "| DEBUG_FORCE" : "");
+  }
+  if (!base) {
     return NextResponse.json(
-      { error: "Server misconfiguration: GEMINI_API_KEY is not set" },
+      {
+        error:
+          "Server misconfiguration: set BACKEND_URL (or NEXT_PUBLIC_API_URL) so prompt generation can proxy to the API server.",
+      },
       { status: 500 },
     );
   }
 
-  let json: unknown;
+  let bodyText: string;
   try {
-    json = await req.json();
+    bodyText = await req.text();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const parsed = generateRequestSchema.safeParse(json);
-  if (!parsed.success) {
+  let upstream: Response;
+  const generateUrl = `${base}/api/generate`;
+  try {
+    upstream = await fetchWithLocalhostIpv4Fallback(generateUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/plain, application/json",
+      },
+      body: bodyText,
+    });
+  } catch (err) {
+    const info = logUpstreamProxyFailure("api/generate", generateUrl, err);
     return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 },
+      {
+        error: `Cannot reach ${base} (${info.category}). Start Express on the same port as BACKEND_URL.`,
+        failureCategory: info.category,
+        failureCode: info.code ?? null,
+        ...(process.env.NODE_ENV === "development"
+          ? { debug: { targetUrl: generateUrl, detail: info.fullMessage } }
+          : {}),
+      },
+      { status: 502 },
     );
   }
 
-  const { prompt, designStyle, previousCode } = parsed.data;
-  const modelCandidates = resolveModelCandidates(resolveGeminiModel());
-  console.log("[/api/generate] Model candidates:", modelCandidates.join(", "));
+  if (!upstream.ok) {
+    const errText = await upstream.text();
+    return new NextResponse(errText, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
+      },
+    });
+  }
 
-  const ai = new GoogleGenAI({ apiKey, apiVersion: "v1" });
-  const systemInstruction = buildSystemInstruction(designStyle);
-  let activeModelName = modelCandidates[0] ?? DEFAULT_GEMINI_MODEL;
+  const contentType =
+    upstream.headers.get("Content-Type") ?? "text/plain; charset=utf-8";
+  const outHeaders = new Headers();
+  outHeaders.set("Content-Type", contentType);
+  outHeaders.set("Cache-Control", "no-store");
+  /** Helps reverse proxies stream chunks instead of buffering the full body. */
+  outHeaders.set("X-Accel-Buffering", "no");
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        let streamResponse: Awaited<ReturnType<typeof ai.models.generateContentStream>> | null =
-          null;
-        let lastError: unknown = null;
-
-        for (const candidate of modelCandidates) {
-          activeModelName = candidate;
-          try {
-            streamResponse = await ai.models.generateContentStream({
-              model: activeModelName,
-              contents: {
-                role: "user",
-                parts: [
-                  {
-                    text: buildUserPrompt({
-                      prompt,
-                      previousCode,
-                      systemInstruction,
-                    }),
-                  },
-                ],
-              },
-              config: {
-                temperature: 0.5,
-                maxOutputTokens: 8192,
-              },
-            });
-            break;
-          } catch (candidateError) {
-            lastError = candidateError;
-            const message =
-              candidateError instanceof Error ? candidateError.message : String(candidateError);
-            const isModelCompatibilityIssue =
-              /not found|not supported|Unknown name "systemInstruction"|Developer instruction is not enabled/i.test(
-                message,
-              );
-            if (!isModelCompatibilityIssue) {
-              throw candidateError;
-            }
-            console.warn(`[/api/generate] Model ${candidate} failed; trying next candidate.`);
-          }
-        }
-        if (!streamResponse) {
-          throw lastError instanceof Error ? lastError : new Error(String(lastError));
-        }
-
-        for await (const chunk of streamResponse) {
-          const text = chunk.text;
-          if (text) {
-            controller.enqueue(encoder.encode(text));
-          }
-        }
-        controller.close();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("[/api/generate] Generation stream failed", {
-          modelName: activeModelName,
-          message,
-          stack: err instanceof Error ? err.stack : undefined,
-        });
-        controller.enqueue(encoder.encode(`\n\n/* Error: ${message} */\n`));
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
+  return new Response(upstream.body, {
+    headers: outHeaders,
   });
 }

@@ -34,7 +34,8 @@ export const reactComponentResultSchema = z.object({
 export type ReactComponentResult = z.infer<typeof reactComponentResultSchema>;
 
 export function getReactComponentJsonSchema(): Record<string, unknown> {
-  return zodToJsonSchema(reactComponentResultSchema, {
+  // zod v4 vs zod-to-json-schema typings: runtime shape is valid.
+  return zodToJsonSchema(reactComponentResultSchema as never, {
     name: "ReactComponentResult",
     $refStrategy: "none",
   }) as Record<string, unknown>;

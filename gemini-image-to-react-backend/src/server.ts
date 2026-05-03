@@ -4,16 +4,33 @@ import express from "express";
 import multer from "multer";
 import { ZodError } from "zod";
 import { imageToStructuredReact } from "./gemini.js";
+import { streamPromptGenerateToResponse } from "./prompt-stream.js";
 
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST?.trim() || "0.0.0.0";
+const PORT = Number(process.env.PORT || 8080) || 8080;
 
-/** Comma-separated list; defaults allow the Next.js dev server on port 3001. */
-const corsOrigins = (
-  process.env.ALLOWED_ORIGINS ?? "http://localhost:3001,http://127.0.0.1:3001"
-).split(",")
+/** Comma-separated list with safe local defaults + optional production frontend URL. */
+const defaultCorsOrigins = [
+  "http://localhost:3000", // Next.js dev (explicit; keep for CORS)
+  "http://localhost:3001",
+  "http://localhost:3002",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+  "http://127.0.0.1:3002",
+];
+const productionFrontendUrl =
+  process.env.PRODUCTION_FRONTEND_URL?.trim() ||
+  process.env.FRONTEND_URL?.trim() ||
+  process.env.VERCEL_PRODUCTION_URL?.trim() ||
+  "";
+const fromEnv = (process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
   .map((s) => s.trim().replace(/\/$/, ""))
   .filter(Boolean);
+/** Union: always include local dev ports; append env + production URL (no accidental CORS lockout). */
+const corsOrigins = [...defaultCorsOrigins, ...fromEnv, productionFrontendUrl]
+  .map((s) => s.trim().replace(/\/$/, ""))
+  .filter(Boolean)
+  .filter((v, i, a) => a.indexOf(v) === i);
 const GEMINI_MODEL =
   process.env.GEMINI_MODEL?.trim() ||
   process.env.GEMINI_MODEL_NAME?.trim() ||
@@ -37,6 +54,8 @@ const upload = multer({
 
 const app = express();
 
+app.use(express.json({ limit: "4mb" }));
+
 console.log("[server] CORS allowed origins:", corsOrigins);
 
 app.use(
@@ -51,19 +70,31 @@ app.use(
       callback(isAllowed ? null : new Error(`CORS blocked for origin: ${origin}`), isAllowed);
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Accept"],
-    credentials: false,
+    allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
+    credentials: true,
     optionsSuccessStatus: 204,
   }),
 );
 
-app.get("/health", (_req, res) => {
-  if (!isGeminiConfigured) {
+app.post("/api/generate", async (req, res): Promise<void> => {
+  console.log("[api/generate] request", { origin: req.headers.origin });
+  await streamPromptGenerateToResponse(req.body, res);
+});
+
+app.get("/health", (req, res) => {
+  console.log("[/health] request received", {
+    method: req.method,
+    url: req.url,
+    host: req.headers.host,
+    "user-agent": req.headers["user-agent"]?.slice(0, 80),
+  });
+  /** Read at request time so a restarted process always reflects the current `process.env`. */
+  if (!process.env.GEMINI_API_KEY?.trim()) {
     res.status(503).json({
       ok: false,
       error: "GEMINI_API_KEY is missing",
       message:
-        "Set GEMINI_API_KEY in your backend .env before calling /api/image-to-react.",
+        "Set GEMINI_API_KEY in backend .env and restart the Express server after rotating the key.",
     });
     return;
   }
@@ -80,13 +111,15 @@ app.post(
       contentLength: req.headers["content-length"],
     });
 
-    if (!GEMINI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY?.trim()) {
       console.error("[api/image-to-react] GEMINI_API_KEY missing");
       res.status(500).json({
         error: "Server misconfiguration: GEMINI_API_KEY is not set",
       });
       return;
     }
+
+    const geminiApiKey = process.env.GEMINI_API_KEY.trim();
 
     const file = req.file;
     if (!file?.buffer?.length) {
@@ -114,7 +147,7 @@ app.post(
     try {
       console.log("[api/image-to-react] calling Gemini...");
       const result = await imageToStructuredReact({
-        apiKey: GEMINI_API_KEY,
+        apiKey: geminiApiKey,
         model: GEMINI_MODEL,
         imageBase64: file.buffer.toString("base64"),
         mimeType,
@@ -135,10 +168,13 @@ app.post(
   },
 );
 
-app.listen(PORT, HOST, () => {
-  const displayHost = HOST === "0.0.0.0" ? "localhost" : HOST;
-  console.log(`Listening on http://${displayHost}:${PORT}`);
-  console.log(`Bound host: ${HOST}`);
+/** `0.0.0.0` — all interfaces; frontend can still use http://127.0.0.1:PORT */
+console.log(
+  `[server] app.listen(${PORT}, "0.0.0.0") — process.env.PORT=${process.env.PORT === undefined ? "(unset)" : JSON.stringify(process.env.PORT)}`,
+);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Backend is ALIVE — bound to 0.0.0.0:${PORT} (all IPv4 interfaces; not 127.0.0.1-only)`);
+  console.log(`Reachable from this machine at http://127.0.0.1:${PORT} and http://localhost:${PORT}`);
   console.log(`Model: ${GEMINI_MODEL}`);
   if (!isGeminiConfigured) {
     console.error(
