@@ -1,10 +1,12 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
-import { Menu, Play, Sparkles, User, X } from "lucide-react";
+import axios from "axios";
+import { Loader2, Menu, Play, Plus, Sparkles, User, X } from "lucide-react";
 import * as React from "react";
 import { DesignerWorkspace } from "@/components/features/workspace/DesignerWorkspace";
 import { luxeSerif } from "@/lib/fonts/luxe-serif";
+import { postImageToReact } from "@/lib/image-to-react-client";
 import {
   appendPromptHistory,
   incrementTotalProjectsCreated,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/prompt-history";
 import { pickRandomSurprisePrompt } from "@/lib/surprise-prompts";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import type { ApiResponse } from "@/types/generation";
 
 const LUXE_PROMPT_LAYOUT_ID = "luxegen-prompt-shell";
 
@@ -118,8 +121,12 @@ export function LandingPage() {
   const [workspaceRun, setWorkspaceRun] = React.useState<{
     prompt: string;
     key: number;
+    imageResult?: ApiResponse;
   } | null>(null);
   const [promptHistory, setPromptHistory] = React.useState<string[]>([]);
+  const [heroImageBusy, setHeroImageBusy] = React.useState(false);
+  const [heroUploadError, setHeroUploadError] = React.useState("");
+  const heroImageInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     setPromptHistory(loadPromptHistory());
@@ -145,6 +152,37 @@ export function LandingPage() {
     }));
     setPhase("workspace");
     setMenuOpen(false);
+  }
+
+  async function handleHeroImageFile(file: File) {
+    setHeroUploadError("");
+    setHeroImageBusy(true);
+    try {
+      const data = await postImageToReact(file);
+      incrementTotalProjectsCreated();
+      setWorkspaceRun((prev) => ({
+        prompt: "",
+        key: (prev?.key ?? 0) + 1,
+        imageResult: data,
+      }));
+      setPhase("workspace");
+      setMenuOpen(false);
+    } catch (err) {
+      console.error("[landing] image upload failed", err);
+      if (axios.isAxiosError(err)) {
+        const backendError = (err.response?.data as { error?: string } | undefined)?.error;
+        setHeroUploadError(
+          backendError ??
+            (err.code === "ERR_NETWORK"
+              ? "Network error — ensure the backend is running and BACKEND_URL is set in frontend .env.local."
+              : err.message),
+        );
+      } else {
+        setHeroUploadError(err instanceof Error ? err.message : "Image upload failed.");
+      }
+    } finally {
+      setHeroImageBusy(false);
+    }
   }
 
   function applySurprisePrompt() {
@@ -285,20 +323,38 @@ export function LandingPage() {
                   placeholder="Describe The UI You Want..."
                   className={`${luxeSerif.className} min-h-[11.5rem] w-full resize-none bg-transparent p-10 pb-32 text-lg leading-relaxed outline-none placeholder:text-sm placeholder:text-zinc-400 placeholder:font-sans dark:p-4 dark:pb-24 dark:font-medium dark:text-slate-900 dark:placeholder:font-sans dark:placeholder:text-slate-500 md:min-h-[12.5rem]`}
                 />
-                <motion.button
-                  type="button"
-                  onClick={applySurprisePrompt}
-                  title="Fill with a random luxury UI idea"
-                  aria-label="Surprise me with a random prompt"
-                  className="absolute bottom-10 left-10 z-20 inline-flex items-center gap-2 rounded-xl border-2 border-amber-800/35 bg-gradient-to-b from-amber-100 to-amber-200/95 px-3.5 py-2.5 text-xs font-semibold text-amber-950 shadow-[0_4px_14px_rgba(180,83,9,0.25)] ring-1 ring-amber-400/40 transition hover:from-amber-50 hover:to-amber-100 hover:ring-amber-500/50 dark:bottom-3 dark:left-3 dark:border-[#fccf45]/80 dark:from-[#422006] dark:to-[#713f12] dark:text-[#fef9c3] dark:shadow-[0_4px_20px_rgba(0,0,0,0.5)] dark:ring-[#fccf45]/35 dark:hover:from-[#4d2a0a] dark:hover:to-[#854d0e]"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span className="max-w-[10rem] truncate sm:max-w-none sm:whitespace-normal">
-                    Surprise me
-                  </span>
-                </motion.button>
+                <div className="absolute bottom-10 left-10 z-20 flex flex-wrap items-center gap-2 dark:bottom-3 dark:left-3">
+                  <motion.button
+                    type="button"
+                    onClick={() => heroImageInputRef.current?.click()}
+                    disabled={heroImageBusy}
+                    title="Add a reference photo"
+                    aria-label="Add a reference photo"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-amber-800/40 bg-gradient-to-b from-[#f8f4ec] to-[#ebe4d8] text-zinc-800 shadow-[0_4px_12px_rgba(139,105,20,0.2)] ring-1 ring-amber-400/35 transition hover:from-[#f2ece2] hover:to-[#e5ddd0] disabled:cursor-not-allowed disabled:opacity-45 dark:border-[#fccf45]/70 dark:from-[#e8e4dc] dark:to-[#dcd8d0] dark:text-zinc-900"
+                    whileHover={{ scale: heroImageBusy ? 1 : 1.04 }}
+                    whileTap={{ scale: heroImageBusy ? 1 : 0.96 }}
+                  >
+                    {heroImageBusy ? (
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                    ) : (
+                      <Plus className="h-5 w-5" strokeWidth={2} aria-hidden />
+                    )}
+                  </motion.button>
+                  <motion.button
+                    type="button"
+                    onClick={applySurprisePrompt}
+                    title="Fill with a random luxury UI idea"
+                    aria-label="Surprise me with a random prompt"
+                    className="inline-flex items-center gap-2 rounded-xl border-2 border-amber-800/35 bg-gradient-to-b from-amber-100 to-amber-200/95 px-3.5 py-2.5 text-xs font-semibold text-amber-950 shadow-[0_4px_14px_rgba(180,83,9,0.25)] ring-1 ring-amber-400/40 transition hover:from-amber-50 hover:to-amber-100 hover:ring-amber-500/50 dark:border-[#fccf45]/80 dark:from-[#422006] dark:to-[#713f12] dark:text-[#fef9c3] dark:shadow-[0_4px_20px_rgba(0,0,0,0.5)] dark:ring-[#fccf45]/35 dark:hover:from-[#4d2a0a] dark:hover:to-[#854d0e]"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span className="max-w-[10rem] truncate sm:max-w-none sm:whitespace-normal">
+                      Surprise me
+                    </span>
+                  </motion.button>
+                </div>
                 <motion.button
                   type="button"
                   onClick={goToWorkspace}
@@ -316,6 +372,27 @@ export function LandingPage() {
                 </motion.button>
               </div>
             </motion.div>
+            {heroUploadError ? (
+              <p
+                role="alert"
+                className="relative z-10 mx-auto mt-4 max-w-[min(52rem,94vw)] text-center text-sm text-rose-600 dark:text-rose-300"
+              >
+                {heroUploadError}
+              </p>
+            ) : null}
+            <input
+              ref={heroImageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) {
+                  void handleHeroImageFile(file);
+                }
+              }}
+            />
           </main>
         ) : null}
 
@@ -324,6 +401,8 @@ export function LandingPage() {
             <DesignerWorkspace
               autoRunPrompt={workspaceRun.prompt}
               autoRunKey={workspaceRun.key}
+              initialImageResult={workspaceRun.imageResult}
+              initialImageHydrateKey={workspaceRun.key}
               overlayOnHeroGradient
               useFloatingPromptBar
               heroToWorkspaceLayoutId={LUXE_PROMPT_LAYOUT_ID}

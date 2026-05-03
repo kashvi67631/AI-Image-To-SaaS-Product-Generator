@@ -539,6 +539,7 @@ function extractPermissiveCodeWindow(source: string): string {
 export function sanitizeCodePermissive(streamChunk: string): string {
   if (!streamChunk) return "";
   let out = removeStreamCodeFences(streamChunk);
+  out = stripTopLevelExportDefaultAsync(out);
   out = stripLeadingBracedJsonIfApiError(out);
   out = stripLeadingStreamNoiseChars(out);
   out = stripFirstLineNonAlphaPrefix(out);
@@ -573,9 +574,22 @@ export function sanitizeCodePermissive(streamChunk: string): string {
  * `import` through the end of the last `export default`. If that region cannot be parsed, returns ""
  * so the preview layer does not attempt to render garbage (e.g. JSON error bodies).
  */
+/**
+ * Prefer strict import→export slice; if Gemini omits imports (common), fall back to permissive cleanup
+ * so the preview can still mount `<GeneratedComponent />` via react-live.
+ */
+export function sanitizeCodeForPreview(streamChunk: string): string {
+  const strict = sanitizeCode(streamChunk);
+  if (strict.trim()) {
+    return strict;
+  }
+  return sanitizeCodePermissive(streamChunk);
+}
+
 export function sanitizeCode(streamChunk: string): string {
   if (!streamChunk) return "";
   let out = removeStreamCodeFences(streamChunk);
+  out = stripTopLevelExportDefaultAsync(out);
   out = stripLeadingBracedJsonIfApiError(out);
   out = stripLeadingStreamNoiseChars(out);
   out = stripFirstLineNonAlphaPrefix(out);
@@ -599,6 +613,12 @@ export function sanitizeCode(streamChunk: string): string {
 }
 
 function detectLastComponentSymbol(source: string): string | null {
+  if (/\bfunction\s+GeneratedComponent\b/.test(source)) {
+    return "GeneratedComponent";
+  }
+  if (/\bconst\s+GeneratedComponent\s*=/.test(source)) {
+    return "GeneratedComponent";
+  }
   const names: string[] = [];
   for (const m of source.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*[<(]/g)) {
     if (m[1]) {
@@ -615,15 +635,35 @@ function detectLastComponentSymbol(source: string): string | null {
 
 /** Resolve which identifier to render() after ensureDefaultExport runs. */
 function extractDefaultExportName(source: string): string | null {
+  const fromAsyncFn = source.match(
+    /export\s+default\s+async\s+function\s+(\w+)\s*[<(]/,
+  );
+  if (fromAsyncFn?.[1]) {
+    return fromAsyncFn[1];
+  }
   const fromFn = source.match(/export\s+default\s+function\s+(\w+)\s*[<(]/);
   if (fromFn?.[1]) {
     return fromFn[1];
   }
-  const fromIdent = source.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*(?:;|\s*$)/m);
+  const fromIdent = source.match(/export\s+default\s+([A-Za-z_$][\w$]*)\b\s*;?/m);
   if (fromIdent?.[1]) {
     return fromIdent[1];
   }
+  if (/\bfunction\s+GeneratedComponent\b/.test(source)) {
+    return "GeneratedComponent";
+  }
+  if (/\bconst\s+GeneratedComponent\s*=/.test(source)) {
+    return "GeneratedComponent";
+  }
   return null;
+}
+
+/** Normalize async default component — react-live preview runs sync render only. */
+function stripTopLevelExportDefaultAsync(source: string): string {
+  return source.replace(
+    /export\s+default\s+async\s+function\s+/g,
+    "export default function ",
+  );
 }
 
 export type AppendMissingDefaultExportOptions = {
@@ -639,7 +679,9 @@ export function appendMissingDefaultExport(
   raw: string,
   options?: AppendMissingDefaultExportOptions,
 ): string {
-  const cleaned = options?.permissive ? sanitizeCodePermissive(raw) : sanitizeCode(raw);
+  const cleaned = options?.permissive
+    ? sanitizeCodePermissive(raw)
+    : sanitizeCodeForPreview(raw);
   if (!cleaned.trim()) {
     return cleaned;
   }
@@ -716,7 +758,7 @@ export function analyzePreviewCodeIssues(raw: string): {
   unsupportedImports: string[];
   streamError: string | null;
 } {
-  const sanitized = sanitizeCode(raw);
+  const sanitized = sanitizeCodeForPreview(raw);
   const streamError = extractStreamError(sanitized);
   const hasDefaultExport =
     /export\s+default\s+function\s+\w+\s*[<(]/.test(sanitized) ||
@@ -910,7 +952,7 @@ export function appendTemporaryClosingTagsForOpenElements(source: string): strin
 }
 
 function applyPermissiveStreamFixes(preSanitized: string): string {
-  let fixed = preSanitized.trim();
+  let fixed = stripTopLevelExportDefaultAsync(preSanitized.trim());
   fixed = fixed.replace(/export\s+default\s*$/m, "").replace(/export\s*$/m, "");
   fixed = appendTemporaryClosingTagsForOpenElements(fixed);
   fixed = closeUnbalancedPairs(fixed);

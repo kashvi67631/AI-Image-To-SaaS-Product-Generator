@@ -50,19 +50,14 @@ import {
 import { incrementTotalGenerations, readTotalGenerations } from "@/lib/storage/total-generations";
 import { pickRandomSurpriseIdea } from "@/lib/prompt/surprise-ideas";
 import { designStyles, type DesignStyle } from "@/lib/validation/generate-request";
+import { IMAGE_UPLOAD_PATH, postImageToReact } from "@/lib/image-to-react-client";
 import { ApiResponse } from "@/types/generation";
 
-/** Same-origin proxy → Express /api/image-to-react (see app/api/image-to-react/route.ts). */
-const IMAGE_UPLOAD_PATH = "/api/image-to-react";
 const LUXE_CRAFTING_MESSAGE = "LuxeGen is crafting your UI…";
 type BackendHealthState = "checking" | "ready" | "offline" | "no_gemini";
 const BACKOFF_BASE_DELAY_MS = 1000;
 const MAX_503_RETRIES = 3;
 const HISTORY_STORAGE_KEY = "luxegen-recent-history";
-const uploadClient = axios.create({
-  timeout: 120000,
-  headers: { Accept: "application/json" },
-});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,29 +118,6 @@ function logClientGenerateFetchFailure(err: unknown, context: string): void {
   }
   console.error(`[generate] Fetch error (${context})`, err);
 }
-
-uploadClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    if (!axios.isAxiosError(error)) {
-      return Promise.reject(error);
-    }
-    const status = error.response?.status;
-    const cfg = error.config;
-    if ((status !== 503 && status !== 429) || !cfg) {
-      return Promise.reject(error);
-    }
-
-    const retries = Number((cfg as { __retryCount?: number }).__retryCount ?? 0);
-    if (retries >= MAX_503_RETRIES) {
-      return Promise.reject(error);
-    }
-
-    (cfg as { __retryCount?: number }).__retryCount = retries + 1;
-    await sleep(getBackoffDelayMs(retries));
-    return uploadClient.request(cfg);
-  },
-);
 
 function fireSuccessConfetti() {
   confetti({
@@ -214,6 +186,9 @@ export type DesignerWorkspaceProps = {
   heroToWorkspaceLayoutId?: string;
   /** Fade/zoom workspace canvas on first entry from the dashboard hero. */
   animateCanvasEntrance?: boolean;
+  /** Landing hero image upload — hydrates preview from `sourceCode` once per hydrate key. */
+  initialImageResult?: ApiResponse;
+  initialImageHydrateKey?: string | number;
 };
 
 export function DesignerWorkspace({
@@ -223,6 +198,8 @@ export function DesignerWorkspace({
   useFloatingPromptBar = false,
   heroToWorkspaceLayoutId,
   animateCanvasEntrance = false,
+  initialImageResult,
+  initialImageHydrateKey,
 }: DesignerWorkspaceProps = {}) {
   const isLuxeWorkingPage = useFloatingPromptBar && overlayOnHeroGradient;
   const [backendHealth, setBackendHealth] = useState<BackendHealthState>(
@@ -272,6 +249,7 @@ export function DesignerWorkspace({
   } | null>(null);
   const capacityRetryCountRef = useRef(0);
   const capacityRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appliedImageHydrateKeyRef = useRef<string | number | undefined>(undefined);
 
   useEffect(() => {
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -385,6 +363,35 @@ export function DesignerWorkspace({
     const t = window.setTimeout(() => setShowGenerationCompleteBadge(false), 5200);
     return () => window.clearTimeout(t);
   }, [showGenerationCompleteBadge]);
+
+  useEffect(() => {
+    if (initialImageResult === undefined || initialImageHydrateKey === undefined) {
+      return;
+    }
+    if (appliedImageHydrateKeyRef.current === initialImageHydrateKey) {
+      return;
+    }
+    appliedImageHydrateKeyRef.current = initialImageHydrateKey;
+    setResponse(initialImageResult);
+    setStreamedPromptCode(initialImageResult.sourceCode ?? "");
+    setPromptError("");
+    setError("");
+    const id = createClientId();
+    const createdAt = new Date().toLocaleString();
+    setHistory((current) =>
+      [
+        {
+          id,
+          componentName: initialImageResult.componentName,
+          createdAt,
+          response: initialImageResult,
+        },
+        ...current,
+      ].slice(0, 5),
+    );
+    setTotalGenerations(incrementTotalGenerations());
+    fireSuccessConfetti();
+  }, [initialImageResult, initialImageHydrateKey]);
 
   useEffect(() => {
     function onGlobalUploadShortcut(event: KeyboardEvent) {
@@ -663,14 +670,15 @@ export function DesignerWorkspace({
     formData.append("image", file);
 
     try {
-      const result = await uploadClient.post<ApiResponse>(IMAGE_UPLOAD_PATH, formData);
-      console.log("[upload] success", { status: result.status });
-      setResponse(result.data);
+      const data = await postImageToReact(file);
+      console.log("[upload] success", { path: IMAGE_UPLOAD_PATH });
+      setResponse(data);
+      setStreamedPromptCode(data.sourceCode ?? "");
       const id = createClientId();
       const createdAt = new Date().toLocaleString();
       setHistory((current) =>
         [
-          { id, componentName: result.data.componentName, createdAt, response: result.data },
+          { id, componentName: data.componentName, createdAt, response: data },
           ...current,
         ].slice(0, 5),
       );
@@ -1312,7 +1320,11 @@ export function DesignerWorkspace({
                         rawCode={streamedPromptCode}
                         serverBusy={serverBusy}
                         onServerBusyRetry={handleServerBusyRetry}
-                        forceRender={forceRenderPreview || generateLoading}
+                        forceRender={
+                          forceRenderPreview ||
+                          generateLoading ||
+                          Boolean(streamedPromptCode.trim())
+                        }
                         isGenerating={generateLoading}
                         polishingMessage={LUXE_CRAFTING_MESSAGE}
                         luxeGoldShimmer
@@ -1463,7 +1475,11 @@ export function DesignerWorkspace({
                       rawCode={streamedPromptCode}
                       serverBusy={serverBusy}
                       onServerBusyRetry={handleServerBusyRetry}
-                      forceRender={forceRenderPreview || generateLoading}
+                      forceRender={
+                        forceRenderPreview ||
+                        generateLoading ||
+                        Boolean(streamedPromptCode.trim())
+                      }
                       isGenerating={generateLoading}
                       polishingMessage="Polishing your luxury components..."
                     />

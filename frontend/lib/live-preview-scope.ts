@@ -9,6 +9,16 @@ import * as React from "react";
 export const livePreviewScope = {
   ...LucideReact,
   ...FramerMotion,
+  /** Gemini strips imports; `motion` must exist when code used `import { motion } from "framer-motion"`. */
+  motion: FramerMotion.motion,
+  /** Explicit entries so namespace spread gaps do not drop common motion APIs. */
+  AnimatePresence: FramerMotion.AnimatePresence,
+  LayoutGroup: FramerMotion.LayoutGroup,
+  LazyMotion: FramerMotion.LazyMotion,
+  domAnimation: FramerMotion.domAnimation,
+  domMax: FramerMotion.domMax,
+  useAnimation: FramerMotion.useAnimation,
+  useAnimationControls: FramerMotion.useAnimationControls,
   React,
   useState: React.useState,
   useEffect: React.useEffect,

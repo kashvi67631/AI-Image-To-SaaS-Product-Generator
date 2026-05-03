@@ -22,21 +22,21 @@ type PreviewErrorBoundaryProps = {
   onRecover?: () => void;
 };
 
-type PreviewErrorBoundaryState = { hasError: boolean };
+type PreviewErrorBoundaryState = { hasError: boolean; lastMessage: string };
 
 class PreviewErrorBoundary extends React.Component<
   PreviewErrorBoundaryProps,
   PreviewErrorBoundaryState
 > {
-  state: PreviewErrorBoundaryState = { hasError: false };
+  state: PreviewErrorBoundaryState = { hasError: false, lastMessage: "" };
 
-  static getDerivedStateFromError(): PreviewErrorBoundaryState {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): PreviewErrorBoundaryState {
+    return { hasError: true, lastMessage: error.message };
   }
 
   componentDidUpdate(prevProps: PreviewErrorBoundaryProps) {
     if (prevProps.code !== this.props.code) {
-      this.setState({ hasError: false });
+      this.setState({ hasError: false, lastMessage: "" });
     }
   }
 
@@ -49,9 +49,14 @@ class PreviewErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-sm text-amber-950 dark:border-amber-300/25 dark:bg-amber-500/5 dark:text-amber-100/90">
-          <p>Preview paused — the streamed component is not runnable yet.</p>
+          <p>Preview hit a runtime error — check the streamed code for invalid JSX or hooks.</p>
+          {this.state.lastMessage ? (
+            <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-amber-100/80 p-2 text-left text-[11px] whitespace-pre-wrap text-amber-950 dark:bg-amber-950/40 dark:text-amber-100/90">
+              {this.state.lastMessage}
+            </pre>
+          ) : null}
           <p className="text-xs text-amber-800/90 dark:text-amber-200/70">
-            Showing the last stable preview until the next valid update arrives.
+            A stable preview will return on the next successful update.
           </p>
         </div>
       );
@@ -212,9 +217,11 @@ export function StreamingLivePreview({
     () => analyzePreviewCodeIssues(normalizedRawCode),
     [normalizedRawCode],
   );
+  /** Skeleton only while busy/streaming, or when code exists but live provider is still on a placeholder. */
   const showShimmer =
-    (Boolean(rawCode.trim()) || isGenerating || serverBusy) &&
-    (isPlaceholderOrWaitingLiveCode(providerCode) || isGenerating || serverBusy);
+    serverBusy ||
+    isGenerating ||
+    (Boolean(rawCode.trim()) && isPlaceholderOrWaitingLiveCode(providerCode));
 
   if (serverBusy) {
     return (
