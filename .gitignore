@@ -1,0 +1,23 @@
+# Monorepo root — nested packages also ship their own .gitignore.
+# Keep secrets and local installs out of git: .env, node_modules, .next
+
+node_modules/
+
+# Secrets and local env
+.env
+.env.local
+.env.*.local
+.env*
+!.env.example
+!**/.env.example
+
+# Builds & caches
+.next/
+dist/
+out/
+build/
+*.tsbuildinfo
+
+# Logs & OS
+*.log
+.DS_Store

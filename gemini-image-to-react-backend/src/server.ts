@@ -69,37 +69,41 @@ app.use(express.json({ limit: "4mb" }));
 const isProduction = process.env.NODE_ENV === "production";
 
 /** Local dev (e.g. Next on :3001): reflect browser origin + cookies if needed. */
-const corsDevelopment = {
-  origin: true as boolean | string | RegExp | string[],
+const corsDevelopment = cors({
+  origin: true,
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
-  optionsSuccessStatus: 204 as const,
-};
+  optionsSuccessStatus: 204,
+});
 
 console.log(
   "[server] CORS:",
   isProduction ? `production allowlist (${corsOrigins.length} origins)` : "development: { origin: true, credentials: true }",
 );
 
-app.use(cors(isProduction ? {
-  origin: (origin, callback) => {
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
-    const normalized = origin.replace(/\/$/, "");
-    const isAllowed = corsOrigins.includes(normalized);
-    callback(
-      isAllowed ? null : new Error(`CORS blocked for origin: ${origin}`),
-      isAllowed,
-    );
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
-  credentials: true,
-  optionsSuccessStatus: 204,
-} : corsDevelopment));
+app.use(
+  isProduction
+    ? cors({
+        origin: (origin, callback) => {
+          if (!origin) {
+            callback(null, true);
+            return;
+          }
+          const normalized = origin.replace(/\/$/, "");
+          const isAllowed = corsOrigins.includes(normalized);
+          callback(
+            isAllowed ? null : new Error(`CORS blocked for origin: ${origin}`),
+            isAllowed,
+          );
+        },
+        methods: ["GET", "POST", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
+        credentials: true,
+        optionsSuccessStatus: 204,
+      })
+    : corsDevelopment,
+);
 
 app.post("/api/generate", async (req, res): Promise<void> => {
   console.log("[api/generate] request", { origin: req.headers.origin });

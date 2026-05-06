@@ -5,6 +5,7 @@ import axios from "axios";
 import { Loader2, Menu, Play, Plus, Sparkles, User, X } from "lucide-react";
 import * as React from "react";
 import { DesignerWorkspace } from "@/components/features/workspace/DesignerWorkspace";
+import { DesignerWorkspaceErrorBoundary } from "@/components/features/workspace/DesignerWorkspaceErrorBoundary";
 import { luxeSerif } from "@/lib/fonts/luxe-serif";
 import { postImageToReact } from "@/lib/image-to-react-client";
 import {
@@ -398,16 +399,18 @@ export function LandingPage() {
 
         {phase === "workspace" && workspaceRun ? (
           <div className="relative z-10 min-h-0 flex-1">
-            <DesignerWorkspace
-              autoRunPrompt={workspaceRun.prompt}
-              autoRunKey={workspaceRun.key}
-              initialImageResult={workspaceRun.imageResult}
-              initialImageHydrateKey={workspaceRun.key}
-              overlayOnHeroGradient
-              useFloatingPromptBar
-              heroToWorkspaceLayoutId={LUXE_PROMPT_LAYOUT_ID}
-              animateCanvasEntrance
-            />
+            <DesignerWorkspaceErrorBoundary>
+              <DesignerWorkspace
+                autoRunPrompt={workspaceRun.prompt}
+                autoRunKey={workspaceRun.key}
+                initialImageResult={workspaceRun.imageResult}
+                initialImageHydrateKey={workspaceRun.key}
+                overlayOnHeroGradient
+                useFloatingPromptBar
+                heroToWorkspaceLayoutId={LUXE_PROMPT_LAYOUT_ID}
+                animateCanvasEntrance
+              />
+            </DesignerWorkspaceErrorBoundary>
           </div>
         ) : null}
       </div>

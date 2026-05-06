@@ -1,7 +1,9 @@
 "use client";
 
+import * as React from "react";
 import { motion } from "framer-motion";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 type StreamedCodeDisplayProps = {
@@ -10,14 +12,50 @@ type StreamedCodeDisplayProps = {
   isStreaming?: boolean;
   /** Dark gold panel (workspace Streamed Code column). */
   variant?: "default" | "luxe";
+  /** Optional 1-based line numbers to subtly highlight as changed. */
+  changedLineNumbers?: number[];
 };
 
 export function StreamedCodeDisplay({
   code,
   isStreaming = false,
   variant = "default",
+  changedLineNumbers = [],
 }: StreamedCodeDisplayProps) {
   const luxe = variant === "luxe";
+  const [isDarkMode, setIsDarkMode] = React.useState(true);
+
+  const codeScrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useLayoutEffect(() => {
+    const el = codeScrollRef.current;
+    if (!el || !code.trim()) {
+      return;
+    }
+    const scrollEnd = (): void => {
+      el.scrollTop = el.scrollHeight;
+    };
+    scrollEnd();
+    const id = requestAnimationFrame(scrollEnd);
+    return () => cancelAnimationFrame(id);
+  }, [code, isStreaming]);
+
+  React.useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const syncDark = () => {
+      const darkClass = document.documentElement.classList.contains("dark");
+      setIsDarkMode(darkClass);
+    };
+    syncDark();
+    const observer = new MutationObserver(syncDark);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   if (!code.trim()) {
     if (!isStreaming) {
@@ -86,15 +124,33 @@ export function StreamedCodeDisplay({
   );
 
   const body = (
-    <div className={luxe ? "bg-[#050403]" : "bg-zinc-950"}>
+    <div
+      ref={codeScrollRef}
+      className={
+        luxe
+          ? "max-h-[28rem] overflow-y-auto overflow-x-auto bg-[#050403]"
+          : "max-h-[28rem] overflow-y-auto overflow-x-auto bg-zinc-950"
+      }
+    >
       <SyntaxHighlighter
         language="tsx"
-        style={oneDark}
+        style={isDarkMode ? oneDark : oneLight}
         customStyle={{
           margin: 0,
           background: "transparent",
           fontSize: "0.82rem",
-          maxHeight: "28rem",
+        }}
+        wrapLines
+        lineProps={(lineNumber) => {
+          if (!changedLineNumbers.includes(lineNumber)) {
+            return {};
+          }
+          return {
+            style: {
+              display: "block",
+              background: isDarkMode ? "rgba(251, 191, 36, 0.16)" : "rgba(251, 191, 36, 0.24)",
+            },
+          };
         }}
         wrapLongLines
       >

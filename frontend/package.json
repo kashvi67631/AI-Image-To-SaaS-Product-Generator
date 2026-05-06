@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:all": "npm run dev --prefix ..",
     "build": "next build",
+    "build:stable": "npm run typecheck && npm run lint && next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "build:prod": "next build",
     "start:prod": "next start"
   },

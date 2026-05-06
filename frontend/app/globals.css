@@ -697,3 +697,26 @@ html.dark .luxe-dashboard-mesh::after {
   animation: luxe-orb-drift-5 39s linear infinite;
   animation-delay: -3s;
 }
+
+@keyframes luxegen-empty-prompt-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  22% {
+    transform: translateX(-3px);
+  }
+  44% {
+    transform: translateX(3px);
+  }
+  66% {
+    transform: translateX(-2px);
+  }
+  88% {
+    transform: translateX(2px);
+  }
+}
+
+.luxegen-empty-prompt-shake {
+  animation: luxegen-empty-prompt-shake 0.45s ease-out;
+}

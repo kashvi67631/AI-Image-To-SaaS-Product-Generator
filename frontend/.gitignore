@@ -1,4 +1,5 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Private env, deps, and Next output: .env*, node_modules, .next (never commit secrets).
 
 # dependencies
 /node_modules

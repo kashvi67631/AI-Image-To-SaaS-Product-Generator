@@ -17,6 +17,8 @@ import {
   isLivePreviewCodeCompilable,
 } from "@/lib/live-preview-compile-check";
 import { luxeSerif } from "@/lib/fonts/luxe-serif";
+import { devWarn } from "@/lib/dev-log";
+import { persistPreviewProviderCodeForDiagnostics } from "@/lib/workspace-diagnostics";
 
 type PreviewErrorBoundaryProps = {
   code: string;
@@ -43,7 +45,7 @@ class PreviewErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error) {
-    console.warn("[StreamingLivePreview] runtime error (often incomplete stream):", error.message);
+    devWarn("[StreamingLivePreview] runtime error (often incomplete stream):", error.message);
     this.props.onRecover?.();
   }
 
@@ -82,7 +84,7 @@ class SafeRender extends React.Component<SafeRenderProps, SafeRenderState> {
   }
 
   componentDidCatch(error: Error) {
-    console.warn("[SafeRender] guarded partial render error:", error.message);
+    devWarn("[SafeRender] guarded partial render error:", error.message);
     this.props.onError?.();
   }
 
@@ -104,15 +106,58 @@ class SafeRender extends React.Component<SafeRenderProps, SafeRenderState> {
   }
 }
 
-const MemoLivePreview = React.memo(function MemoLivePreview() {
-  return <LivePreview />;
-});
+/**
+ * Do not wrap `LivePreview` in `React.memo` with no props: when `LiveProvider`
+ * updates context after async transpile, memo bails out and the preview never
+ * re-renders (stuck blank).
+ */
+function LivePreviewWithShell(props: {
+  isGenerating: boolean;
+  luxeGoldShimmer?: boolean;
+}): React.ReactElement {
+  const { element } = React.useContext(LiveContext);
+  const showCompilingOverlay =
+    props.isGenerating && (element === undefined || element === null);
 
-function TryLivePreview(props: { onRenderError: () => void }): React.ReactElement | null {
+  return (
+    <div className="relative min-h-[min(11rem,32dvh)] w-full flex-1">
+      <LivePreview className="min-h-[8rem] w-full" />
+      {showCompilingOverlay ? (
+        <div
+          className={
+            props.luxeGoldShimmer
+              ? "absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-gradient-to-b from-[#fffdfb]/92 to-[#f5ebe0]/88 px-3 py-6 text-center dark:from-[#252018]/94 dark:to-[#1a1612]/92"
+              : "absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/90 px-3 py-6 text-center dark:bg-[#121217]/88"
+          }
+          role="status"
+          aria-live="polite"
+        >
+          <p
+            className={
+              props.luxeGoldShimmer
+                ? "max-w-sm text-sm font-medium text-amber-950/90 dark:text-[#e8dcc4]/95"
+                : "max-w-sm text-sm text-zinc-600 dark:text-zinc-300"
+            }
+          >
+            Compiling live preview from the stream… It will appear here when the TSX is valid.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TryLivePreview(props: {
+  onRenderError: () => void;
+  isGenerating: boolean;
+  luxeGoldShimmer?: boolean;
+}): React.ReactElement | null {
   try {
-    return <MemoLivePreview />;
+    return (
+      <LivePreviewWithShell isGenerating={props.isGenerating} luxeGoldShimmer={props.luxeGoldShimmer} />
+    );
   } catch (err) {
-    console.warn("[TryLivePreview] render guard:", err);
+    devWarn("[TryLivePreview] render guard:", err);
     props.onRenderError();
     return null;
   }
@@ -165,6 +210,49 @@ type StreamingLivePreviewProps = {
 
 const DEFAULT_POLISH_MESSAGE = "Polishing your luxury components...";
 
+function appearsChunkClosed(code: string): boolean {
+  const t = code.trim();
+  if (!t) {
+    return false;
+  }
+  return /<\/[a-zA-Z][\w:-]*>\s*$/.test(t) || /\/>\s*$/.test(t) || /[;)}]\s*$/.test(t);
+}
+
+function hasRenderableKickoffSignal(code: string): boolean {
+  const t = code.trim();
+  if (!t) {
+    return false;
+  }
+  return (
+    /<[A-Za-z][\w:-]*(?:\s|>)/.test(t) ||
+    /\bfunction\s+[A-Za-z_$][\w$]*\s*\(/.test(t) ||
+    /\bconst\s+[A-Za-z_$][\w$]*\s*=\s*(?:\([^)]*\)\s*=>|function\b)/.test(t)
+  );
+}
+
+/** Set at build time in the client bundle. */
+const IS_PRODUCTION_BUILD = process.env.NODE_ENV === "production";
+
+/**
+ * Production: only feed react-live when sucrase can compile the snippet and the chunk
+ * looks structurally complete enough to avoid streaming SyntaxErrors in the preview.
+ */
+function passesProductionStableGate(liveCode: string): boolean {
+  if (isPlaceholderOrWaitingLiveCode(liveCode)) {
+    return true;
+  }
+  try {
+    if (!isLivePreviewCodeCompilable(liveCode)) {
+      return false;
+    }
+    return (
+      appearsChunkClosed(liveCode) || isPreparedLiveCodeStructurallyRenderSafe(liveCode)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function StreamingLivePreview({
   rawCode,
   serverBusy = false,
@@ -198,8 +286,25 @@ export function StreamingLivePreview({
 
   const lastStableLiveRef = React.useRef<string | null>(null);
   const [providerCode, setProviderCode] = React.useState(LIVE_PREVIEW_WAITING_CODE);
+  const [previewPipelineLabel, setPreviewPipelineLabel] = React.useState<
+    "Waiting" | "Debounced" | "Kickoff"
+  >("Waiting");
   const prevStreamEpochRef = React.useRef<number | undefined>(undefined);
   const recoverThrottleRef = React.useRef<number>(0);
+  const debounceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showPreviewDebugBadge =
+    process.env.NODE_ENV === "development" && isGenerating && !serverBusy;
+
+  const bumpPipelineLabel = React.useCallback((next: "Waiting" | "Debounced" | "Kickoff") => {
+    if (process.env.NODE_ENV === "development") {
+      setPreviewPipelineLabel(next);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    persistPreviewProviderCodeForDiagnostics(providerCode);
+  }, [providerCode]);
 
   const applyLiveCode = React.useCallback(
     (next: string) => {
@@ -211,6 +316,15 @@ export function StreamingLivePreview({
         return;
       }
       if (isGenerating) {
+        if (
+          !lastStableLiveRef.current &&
+          !isPlaceholderOrWaitingLiveCode(next) &&
+          hasRenderableKickoffSignal(fenceStrippedRaw)
+        ) {
+          /** First valid JSX/component signal: attempt render early instead of staying in Waiting forever. */
+          setProviderCode((prev) => (prev === next ? prev : next));
+          return;
+        }
         const stable = lastStableLiveRef.current;
         if (stable) {
           setProviderCode((prev) => (prev === stable ? prev : stable));
@@ -219,7 +333,7 @@ export function StreamingLivePreview({
       }
       setProviderCode((prev) => (prev === next ? prev : next));
     },
-    [isGenerating],
+    [fenceStrippedRaw, isGenerating],
   );
 
   React.useEffect(() => {
@@ -228,12 +342,23 @@ export function StreamingLivePreview({
     if (prev !== undefined && prev !== streamResetKey) {
       lastStableLiveRef.current = null;
       setProviderCode(LIVE_PREVIEW_WAITING_CODE);
+      bumpPipelineLabel("Waiting");
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
     }
-  }, [streamResetKey]);
+  }, [bumpPipelineLabel, streamResetKey]);
 
   React.useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
     if (!fenceStrippedRaw.trim()) {
       if (isGenerating) {
+        bumpPipelineLabel("Waiting");
         setProviderCode((p) => (p === LIVE_PREVIEW_WAITING_CODE ? p : LIVE_PREVIEW_WAITING_CODE));
       } else {
         lastStableLiveRef.current = null;
@@ -242,20 +367,93 @@ export function StreamingLivePreview({
       return;
     }
 
-    const next = candidateLiveCode;
-    const placeholder = isPlaceholderOrWaitingLiveCode(next);
-    const structureOk = placeholder || isPreparedLiveCodeStructurallyRenderSafe(next);
+    const tryApplyCandidate = () => {
+      const next = candidateLiveCode;
+      const placeholder = isPlaceholderOrWaitingLiveCode(next);
+      const structureOk = placeholder || isPreparedLiveCodeStructurallyRenderSafe(next);
+      const closingLooksComplete = appearsChunkClosed(next);
+      const safeEnoughToTry =
+        !isGenerating || placeholder || structureOk || closingLooksComplete;
 
-    if (isGenerating && !structureOk) {
-      const stable = lastStableLiveRef.current;
-      if (stable) {
-        setProviderCode((prev) => (prev === stable ? prev : stable));
+      if (!safeEnoughToTry) {
+        const stable = lastStableLiveRef.current;
+        if (stable) {
+          setProviderCode((prev) => (prev === stable ? prev : stable));
+        }
+        return;
       }
+
+      if (
+        IS_PRODUCTION_BUILD &&
+        isGenerating &&
+        !forceRender &&
+        !placeholder &&
+        !passesProductionStableGate(next)
+      ) {
+        const stable = lastStableLiveRef.current;
+        if (stable) {
+          setProviderCode((prev) => (prev === stable ? prev : stable));
+        }
+        return;
+      }
+
+      try {
+        if (!placeholder && !isLivePreviewCodeCompilable(next)) {
+          const stable = lastStableLiveRef.current;
+          if (stable) {
+            setProviderCode((prev) => (prev === stable ? prev : stable));
+          }
+          return;
+        }
+        applyLiveCode(next);
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          return;
+        }
+        devWarn("[StreamingLivePreview] guarded compile/apply error:", err);
+      }
+    };
+
+    if (isGenerating) {
+      if (hasRenderableKickoffSignal(fenceStrippedRaw)) {
+        bumpPipelineLabel("Kickoff");
+        tryApplyCandidate();
+        return;
+      }
+      bumpPipelineLabel("Debounced");
+      debounceTimerRef.current = setTimeout(() => {
+        bumpPipelineLabel("Kickoff");
+        tryApplyCandidate();
+      }, 500);
       return;
     }
 
-    applyLiveCode(next);
-  }, [applyLiveCode, candidateLiveCode, fenceStrippedRaw, isGenerating]);
+    tryApplyCandidate();
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
+  }, [
+    applyLiveCode,
+    bumpPipelineLabel,
+    candidateLiveCode,
+    fenceStrippedRaw,
+    forceRender,
+    isGenerating,
+  ]);
+
+  React.useEffect(
+    () => () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const handleRecover = React.useCallback(() => {
     const now = Date.now();
@@ -273,9 +471,17 @@ export function StreamingLivePreview({
     () => analyzePreviewCodeIssues(fenceStrippedRaw),
     [fenceStrippedRaw],
   );
-  /** Skeleton: server capacity, or no code yet while generating — never block the canvas once streamed text exists. */
+  /**
+   * Skeleton: server capacity, or very early streaming chunks where code is still too partial
+   * to render a stable preview.
+   */
+  const isEarlyStreamingPhase =
+    isGenerating && fenceStrippedRaw.trim().length < 180;
+  /** Production: keep the “generating” banner for the whole stream unless Force render is on. */
+  const showProductionStreamGenerating =
+    IS_PRODUCTION_BUILD && isGenerating && hasStreamedBody && !forceRender;
   const showShimmer =
-    serverBusy || (!hasStreamedBody && isGenerating);
+    serverBusy || isEarlyStreamingPhase || showProductionStreamGenerating;
 
   if (serverBusy) {
     return (
@@ -330,8 +536,8 @@ export function StreamingLivePreview({
     <article
       className={
         luxeGoldShimmer
-          ? "luxe-thinkhall-surface overflow-hidden rounded-2xl border border-[#d4af37]/32 bg-gradient-to-b from-white to-[#fbf6ed] dark:border-[#fccf45]/22 dark:from-[#12100e] dark:to-[#0a0908]"
-          : "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-[#0b0b0e] dark:shadow-none"
+          ? "luxe-thinkhall-surface w-full min-w-0 overflow-hidden rounded-2xl border border-[#d4af37]/32 bg-gradient-to-b from-white to-[#fbf6ed] dark:border-[#fccf45]/22 dark:from-[#12100e] dark:to-[#0a0908]"
+          : "w-full min-w-0 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-[#0b0b0e] dark:shadow-none"
       }
     >
       <div
@@ -343,7 +549,19 @@ export function StreamingLivePreview({
       >
         {luxeGoldShimmer ? "Live preview · Luxe canvas" : "Live preview (streaming)"}
       </div>
-      <div className="min-h-[min(28rem,72dvh)] p-3 sm:min-h-[28rem] sm:p-4">
+      <div className="relative min-h-[min(28rem,72dvh)] p-3 sm:min-h-[28rem] sm:p-4">
+        {showPreviewDebugBadge ? (
+          <div
+            className={
+              luxeGoldShimmer
+                ? "pointer-events-none absolute right-3 bottom-3 z-20 rounded-md border border-[#d4af37]/40 bg-[#fdfbf4]/92 px-2 py-0.5 font-mono text-[10px] font-medium tracking-tight text-amber-950 shadow-sm backdrop-blur-sm dark:border-[#fccf45]/35 dark:bg-[#1a1612]/90 dark:text-[#fccf45]"
+                : "pointer-events-none absolute right-3 bottom-3 z-20 rounded-md border border-zinc-300/80 bg-white/90 px-2 py-0.5 font-mono text-[10px] font-medium tracking-tight text-zinc-700 shadow-sm backdrop-blur-sm dark:border-white/15 dark:bg-[#0b0b0e]/90 dark:text-zinc-200"
+            }
+            title="Preview pipeline (dev only)"
+          >
+            {previewPipelineLabel}
+          </div>
+        ) : null}
         {!diagnostics.hasDefaultExport && hasStreamedBody && !forceRender ? (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-300/30 dark:bg-amber-500/10 dark:text-amber-200">
             Streamed code has no <code>export default ...</code> yet; turn on <strong>Force render</strong> to try a partial preview.
@@ -402,19 +620,19 @@ export function StreamingLivePreview({
                   : "live-preview-mount flex min-h-[min(20rem,50dvh)] max-h-[min(26rem,65dvh)] flex-col overflow-y-auto overflow-x-auto rounded-2xl border border-white/10 bg-white p-3 text-zinc-900 sm:max-h-[26rem] sm:min-h-[20rem] sm:p-4 [&_main]:h-auto [&_main]:min-h-0 [&_main]:max-h-none [&_main]:overflow-visible [&_.react-live-error]:text-sm [&_.react-live-error]:text-rose-700"
               }
             >
-              {!showShimmer ? (
-                <FilteredStreamingLiveError
-                  hideDuringStream={isGenerating}
-                  className="mb-3 max-h-56 shrink-0 overflow-auto rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-300/40 dark:bg-rose-950/20 dark:text-rose-200"
-                />
-              ) : null}
-              {!showShimmer ? (
-                <SafeRender onError={handleRecover}>
-                  <div className="min-h-0 flex-1">
-                    <TryLivePreview onRenderError={handleRecover} />
-                  </div>
-                </SafeRender>
-              ) : null}
+              <FilteredStreamingLiveError
+                hideDuringStream={isGenerating}
+                className="mb-3 max-h-56 shrink-0 overflow-auto rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-300/40 dark:bg-rose-950/20 dark:text-rose-200"
+              />
+              <SafeRender onError={handleRecover}>
+                <div className="flex min-h-[12rem] flex-1 flex-col">
+                  <TryLivePreview
+                    onRenderError={handleRecover}
+                    isGenerating={isGenerating}
+                    luxeGoldShimmer={luxeGoldShimmer}
+                  />
+                </div>
+              </SafeRender>
             </div>
           </PreviewErrorBoundary>
         </LiveProvider>

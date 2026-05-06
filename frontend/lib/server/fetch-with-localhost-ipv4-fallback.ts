@@ -1,3 +1,4 @@
+import { devLog } from "@/lib/dev-log";
 import { describeUpstreamFetchError } from "@/lib/server/log-upstream-failure";
 
 /**
@@ -38,7 +39,7 @@ export async function fetchWithLocalhostIpv4Fallback(
     }
 
     if (ipv4Url) {
-      console.warn("[upstream-fetch] retrying with 127.0.0.1", {
+      devLog("[upstream-fetch] retrying with 127.0.0.1", {
         from: url,
         to: ipv4Url,
       });

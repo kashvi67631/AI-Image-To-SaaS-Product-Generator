@@ -21,6 +21,11 @@ function resolveModelCandidates(primaryModel: string): string[] {
   return candidates.filter((model, index) => candidates.indexOf(model) === index);
 }
 
+function isTransientCapacityError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /503|429|unavailable|resource_exhausted|rate limit|high demand/i.test(message);
+}
+
 function buildUserPrompt(args: {
   prompt: string;
   previousCode?: string;
@@ -149,10 +154,13 @@ export async function streamPromptGenerateToResponse(
           /not found|not supported|Unknown name "systemInstruction"|Developer instruction is not enabled/i.test(
             message,
           );
-        if (!isModelCompatibilityIssue) {
+        const isTransient = isTransientCapacityError(candidateError);
+        if (!isModelCompatibilityIssue && !isTransient) {
           throw candidateError;
         }
-        console.warn(`[api/generate] Model ${candidate} failed; trying next candidate.`);
+        console.warn(
+          `[api/generate] Model ${candidate} failed (${isTransient ? "transient capacity" : "compatibility"}); trying next candidate.`,
+        );
       }
     }
 
@@ -180,7 +188,8 @@ export async function streamPromptGenerateToResponse(
       stack: err instanceof Error ? err.stack : undefined,
     });
     if (!res.headersSent) {
-      res.status(502).json({ error: message });
+      const status = isTransientCapacityError(err) ? 503 : 502;
+      res.status(status).json({ error: message });
       return;
     }
     res.write(`\n\n/* Error: ${message} */\n`);

@@ -34,6 +34,26 @@ function preferIpv4LocalhostBase(base: string): string {
   }
 }
 
+/** Remove BOM, markdown wrappers, and quotes from URL-like env values. */
+function sanitizeBackendOriginFromEnv(raw: string): string {
+  let value = raw.trim().replace(/^\uFEFF/, "");
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  const markdown = /\[[^\]]*]\((https?:\/\/[^)]+)\)/i.exec(value);
+  if (markdown?.[1]) {
+    value = markdown[1].trim();
+  }
+  const bareUrl = /(https?:\/\/[^\s"'<>[\]()]+)/i.exec(value);
+  if (bareUrl?.[1] && (value.includes("[") || value.includes("("))) {
+    value = bareUrl[1].trim();
+  }
+  return value.replace(/\/$/, "");
+}
+
 export function getBackendBaseUrlMetadata(): {
   base: string | null;
   /** First env key that supplied the base URL (priority order). */
@@ -45,13 +65,15 @@ export function getBackendBaseUrlMetadata(): {
     ["LUXEGEN_BACKEND_URL", process.env.LUXEGEN_BACKEND_URL] as const,
   ];
   for (const [key, raw] of explicitBackends) {
-    const t = raw?.trim();
+    const t = raw ? sanitizeBackendOriginFromEnv(raw) : "";
     if (t) {
       return { base: preferIpv4LocalhostBase(t), envKey: key };
     }
   }
 
-  const pub = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const pub = process.env.NEXT_PUBLIC_API_URL
+    ? sanitizeBackendOriginFromEnv(process.env.NEXT_PUBLIC_API_URL)
+    : "";
   if (!pub) {
     if (process.env.NODE_ENV === "development") {
       return {

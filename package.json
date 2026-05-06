@@ -1,0 +1,15 @@
+{
+  "name": "ai-image-to-saas-product-generator",
+  "private": true,
+  "description": "Run backend + frontend together so Next can reach Express on :8080",
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c blue,green \"npm run dev --prefix gemini-image-to-react-backend\" \"wait-on -t 120000 -i 300 -w 400 http://127.0.0.1:8080/health && npm run dev --prefix frontend\"",
+    "dev:backend": "npm run dev --prefix gemini-image-to-react-backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build:frontend:stable": "npm run build:stable --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "wait-on": "^8.0.3"
+  }
+}
